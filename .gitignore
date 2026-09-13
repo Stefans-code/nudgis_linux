@@ -9,9 +9,15 @@ apps/server/prisma/dev.db
 apps/server/prisma/dev.db-journal
 apps/server/prisma/test.db
 apps/server/prisma/test.db-journal
-apps/server/backups/
-# Cartella "prisma/prisma" annidata per errore (DATABASE_URL relativo risolto rispetto
-# alla cartella schema.prisma, non alla cwd) - contiene DB reali e backup, mai da committare.
+# BUG FIX 13/09/2026: DATABASE_URL="file:./dev.db" (corretto ora in .env/.env.example)
+# si risolve rispetto alla cartella prisma/ (sia per Prisma CLI che per
+# resolveSqliteFilePath() in src/lib/paths.ts) -> i backup notturni (dbBackup.ts)
+# finiscono quindi in prisma/backups/, non in apps/server/backups/ come indicava
+# prima questo file (pattern mai stato corretto, semplicemente non incontrato finora).
+apps/server/prisma/backups/
+# Prima del fix, un vecchio DATABASE_URL="file:./prisma/dev.db" creava per errore
+# questa cartella annidata con dentro il DB reale + backup: se dovesse ricomparire
+# (es. un .env non aggiornato) va comunque tenuta fuori dal repo.
 apps/server/prisma/prisma/
 apps/license-server/prisma/licenses.db
 apps/license-server/prisma/licenses.db-journal

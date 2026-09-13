@@ -1,0 +1,78 @@
+name: Build & test macOS installer
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [main]
+    paths:
+      - "apps/server/**"
+      - "apps/web/**"
+      - ".github/workflows/build-macos-installer.yml"
+
+jobs:
+  build-universal:
+    # macos-latest = Apple Silicon (arm64) nativo. Con Rosetta 2 installata può anche
+    # eseguire binari x64 (il passaggio di "fabbricazione" di pkg per il target x64 ne
+    # ha bisogno) — quindi UN solo runner arm64 riesce a produrre entrambe le arch e a
+    # fare il merge con lipo, senza bisogno di due runner separati + job di merge.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assicura Rosetta 2 (serve a pkg per fabbricare il binario x64 su host arm64)
+        run: softwareupdate --install-rosetta --agree-to-license || true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Installa dipendenze (intero workspace)
+        run: npm ci
+
+      - name: Genera client Prisma (tutti i binaryTargets, vedi schema.prisma)
+        run: npx prisma generate
+        working-directory: apps/server
+
+      - name: Build installer macOS (universale x64+arm64, tarball + .pkg)
+        run: npm run build:installer:macos -w apps/server
+        env:
+          SKIP_OBFUSCATE: "1" # build CI di verifica: l'offuscamento non cambia se il binario parte o no, solo la velocità
+
+      - name: Verifica che il binario sia davvero universale
+        run: lipo -info apps/server/installer-output-macos/nugis-macos-universal/Nugis | tee /tmp/lipo-info.txt && grep -q "x86_64" /tmp/lipo-info.txt && grep -q "arm64" /tmp/lipo-info.txt
+
+      - name: Test reale (via install.sh) — installa il LaunchDaemon e interroga /health
+        run: |
+          set -euo pipefail
+          cd apps/server/installer-output-macos/nugis-macos-universal
+          sudo NUGIS_ADMIN_EMAIL=ci@nugis.test NUGIS_ADMIN_PASSWORD='ci-test-password-123' ./install.sh
+          for i in $(seq 1 15); do
+            if curl -fsS http://localhost:4000/health; then echo; break; fi
+            echo "in attesa del servizio... ($i/15)"; sleep 2
+          done
+          curl -fsS http://localhost:4000/health | grep -q '"ok":true'
+          echo "✅ /health risponde correttamente dopo installazione reale via launchd"
+          sudo /usr/local/nugis/uninstall.sh --purge
+          echo "✅ Disinstallazione completata senza errori"
+
+      - name: Test reale (via .pkg) — installer GUI in modalità silenziosa
+        run: |
+          set -euo pipefail
+          sudo installer -pkg apps/server/installer-output-macos/NugisInstaller.pkg -target /
+          test -f /usr/local/nugis/CREDENZIALI_INIZIALI.txt
+          for i in $(seq 1 15); do
+            if curl -fsS http://localhost:4000/health; then echo; break; fi
+            echo "in attesa del servizio... ($i/15)"; sleep 2
+          done
+          curl -fsS http://localhost:4000/health | grep -q '"ok":true'
+          echo "✅ .pkg installa e avvia correttamente (credenziali casuali in CREDENZIALI_INIZIALI.txt)"
+          sudo /usr/local/nugis/uninstall.sh --purge
+
+      - name: Carica tarball + .pkg come artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nugis-macos-universal
+          path: |
+            apps/server/installer-output-macos/nugis-macos-universal.tar.gz
+            apps/server/installer-output-macos/NugisInstaller.pkg
+          retention-days: 30

@@ -6,6 +6,14 @@
 generator client {
   provider = "prisma-client-js"
   output   = "../src/generated/prisma-client"
+  // BUG FIX (installer multi-OS): senza binaryTargets, "prisma generate" produce SOLO
+  // il motore nativo della macchina su cui gira (qui: Windows) — un .exe Linux/macOS
+  // costruito con quel client crasherebbe subito ("query engine not found for platform
+  // X"). "native" tiene la build locale/dev invariata; gli altri servono a chi fa
+  // build:exe per Linux/macOS con lo stesso schema, senza doverlo rigenerare a mano
+  // su ogni piattaforma target. Copertura Linux ampia (glibc nuovo/vecchio + musl per
+  // Alpine) per l'obiettivo "tutte le distro".
+  binaryTargets = ["native", "windows", "darwin", "darwin-arm64", "debian-openssl-3.0.x", "debian-openssl-1.1.x", "linux-arm64-openssl-3.0.x", "linux-musl", "linux-musl-arm64-openssl-3.0.x"]
 }
 
 datasource db {

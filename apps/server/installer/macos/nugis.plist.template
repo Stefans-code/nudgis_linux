@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+LaunchDaemon di Nugis: equivalente macOS dell'attività pianificata SYSTEM di Windows e
+del servizio systemd di Linux. Gira come root, parte all'avvio del Mac (RunAtLoad),
+riparte da solo se il processo termina (KeepAlive), nessuna finestra visibile.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.nugis.app</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>__NUGIS_DIR__/Nugis</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>__NUGIS_DIR__</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>__NUGIS_DIR__/nugis.log</string>
+    <key>StandardErrorPath</key>
+    <string>__NUGIS_DIR__/nugis.log</string>
+</dict>
+</plist>

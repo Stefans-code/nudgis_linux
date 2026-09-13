@@ -28,8 +28,7 @@ brief_text.txt
 # Output di build binari (exe/installer) - artefatti generati, non sorgenti; troppo
 # pesanti per il repo, si rigenerano con npm run build:exe / build:installer.
 apps/server/dist-exe/
+apps/server/dist-exe-*/
 apps/server/installer-output/
-apps/server/dist-linux/
-apps/server/dist-macos/
 apps/server/installer-output-linux/
 apps/server/installer-output-macos/

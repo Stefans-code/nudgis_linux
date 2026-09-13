@@ -1,0 +1,69 @@
+name: Build & test Linux installer
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [main]
+    paths:
+      - "apps/server/**"
+      - "apps/web/**"
+      - ".github/workflows/build-linux-installer.yml"
+
+jobs:
+  build-and-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Runner nativo per ciascuna arch: evita il problema di "fabbricazione"
+          # cross-arch di pkg (spawn del binario target durante la build, impossibile
+          # se l'host non può eseguire quell'arch — verificato in locale da Windows x64:
+          # costruire node22-linux-x64 funziona, node22-linux-arm64 no).
+          - os: ubuntu-latest
+            arch: x64
+          - os: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Installa dipendenze (intero workspace)
+        run: npm ci
+
+      - name: Genera client Prisma (tutti i binaryTargets, vedi schema.prisma)
+        run: npx prisma generate
+        working-directory: apps/server
+
+      - name: Build installer Linux (${{ matrix.arch }})
+        run: npm run build:installer:linux -w apps/server
+        env:
+          ONLY_ARCH: ${{ matrix.arch }}
+          SKIP_OBFUSCATE: "1" # build CI di verifica: l'offuscamento non cambia se il binario parte o no, solo la velocità
+
+      - name: Test reale — installa ed avvia il servizio, poi interroga /health
+        run: |
+          set -euo pipefail
+          cd apps/server/installer-output-linux
+          tar -xzf nugis-linux-${{ matrix.arch }}.tar.gz
+          cd nugis-linux-${{ matrix.arch }}
+          sudo NUGIS_ADMIN_EMAIL=ci@nugis.test NUGIS_ADMIN_PASSWORD='ci-test-password-123' ./install.sh
+          for i in $(seq 1 15); do
+            if curl -fsS http://localhost:4000/health; then echo; break; fi
+            echo "in attesa del servizio... ($i/15)"; sleep 2
+          done
+          curl -fsS http://localhost:4000/health | grep -q '"ok":true'
+          echo "✅ /health risponde correttamente dopo installazione reale via systemd"
+          sudo systemctl status nugis --no-pager
+          sudo /opt/nugis/uninstall.sh --purge
+          echo "✅ Disinstallazione completata senza errori"
+
+      - name: Carica tarball come artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nugis-linux-${{ matrix.arch }}
+          path: apps/server/installer-output-linux/nugis-linux-${{ matrix.arch }}.tar.gz
+          retention-days: 30

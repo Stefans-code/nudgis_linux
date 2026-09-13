@@ -12,7 +12,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "build:exe": "node scripts/build-exe.js",
-    "build:installer": "node scripts/build-installer.js"
+    "build:installer": "node scripts/build-installer.js",
+    "build:installer:linux": "node scripts/build-installer-linux.js",
+    "build:installer:macos": "node scripts/build-installer-macos.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.1",

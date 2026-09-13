@@ -1,0 +1,25 @@
+[Unit]
+Description=Nugis (bot Telegram multi-creator + pannello admin)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__NUGIS_USER__
+Group=__NUGIS_USER__
+WorkingDirectory=__NUGIS_DIR__
+ExecStart=__NUGIS_DIR__/Nugis
+Restart=on-failure
+RestartSec=5
+# Nessuna finestra/terminale: journald raccoglie stdout/stderr (vedi: journalctl -u nugis -f)
+StandardOutput=journal
+StandardError=journal
+# Riduce cosa il processo può toccare sul sistema, senza impedirgli di scrivere nella
+# sua stessa cartella dati (DB SQLite + backup notturni vivono lì).
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=__NUGIS_DIR__
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

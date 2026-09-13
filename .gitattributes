@@ -1,0 +1,10 @@
+# Gli script di installazione Linux/macOS DEVONO avere fine riga LF, sempre — anche
+# quando li si modifica/clona su Windows (dove Git di default converte in CRLF). Un
+# CRLF nello shebang/corpo di un .sh rompe l'esecuzione su bash reale ("bad interpreter"
+# o comportamento silenziosamente sbagliato su alcune righe). Vale anche per i template
+# di systemd/launchd, che pur non essendo eseguibili vengono letti da systemd/launchd
+# stessi (systemd in particolare non tollera bene i CR nei value dei file .service).
+*.sh text eol=lf
+*.service.template text eol=lf
+*.plist.template text eol=lf
+installer/macos/postinstall text eol=lf

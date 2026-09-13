@@ -1,10 +1,19 @@
-// Build dell'eseguibile Windows di Nugis (server + pannello web in un unico .exe).
-// Uso: npm run build:exe -w apps/server
+// Build dell'eseguibile Nugis (server + pannello web in un unico binario) per una
+// piattaforma a scelta (Windows/Linux/macOS, x64/arm64).
 //
-// Output: apps/server/dist-exe/
-//   Nugis.exe                 <- avvialo per far partire tutto
-//   public/                   <- build statica del pannello web, servita dallo stesso .exe
-//   generated/prisma-client/  <- client Prisma + motore nativo (non impacchettabile nel binario)
+// Uso:
+//   npm run build:exe -w apps/server                       (default: Windows x64, invariato)
+//   PKG_TARGET=node22-linux-x64   OUT_DIR=dist-exe-linux-x64   node scripts/build-exe.js
+//   PKG_TARGET=node22-linux-arm64 OUT_DIR=dist-exe-linux-arm64 node scripts/build-exe.js
+//   PKG_TARGET=node22-macos-x64   OUT_DIR=dist-exe-macos-x64   node scripts/build-exe.js
+//   PKG_TARGET=node22-macos-arm64 OUT_DIR=dist-exe-macos-arm64 node scripts/build-exe.js
+//
+// Output: apps/server/<OUT_DIR>/
+//   Nugis(.exe)               <- avvialo per far partire tutto
+//   public/                   <- build statica del pannello web, servita dallo stesso binario
+//   generated/prisma-client/  <- client Prisma + motori nativi per TUTTE le piattaforme
+//                                target (vedi prisma/schema.prisma binaryTargets) — non
+//                                impacchettabili nel binario da pkg
 //   prisma/migrations/        <- migrazioni, applicate automaticamente all'avvio
 //   .env.example              <- da copiare in ".env" e compilare prima del primo avvio
 //
@@ -12,6 +21,12 @@
 // (query engine) che pkg non può fondere dentro il binario. È normale per applicazioni
 // Node.js pacchettizzate: si distribuisce una cartella, non un unico file, esattamente
 // come fanno molti tool a riga di comando basati su Node.
+//
+// Cross-building: pkg scarica un binario Node precompilato per il target richiesto,
+// quindi si può costruire un eseguibile Linux/macOS anche da Windows (e viceversa) —
+// NON serve la macchina finale per produrre il binario. Serve però quella macchina
+// (o una VM/CI con quel sistema operativo) per TESTARE che parta davvero: un
+// cross-build non garantisce da solo che il binario giri sull'OS di destinazione.
 
 const { execSync } = require("child_process");
 const fs = require("fs");
@@ -19,7 +34,11 @@ const path = require("path");
 
 const SERVER_ROOT = path.resolve(__dirname, "..");
 const WEB_ROOT = path.resolve(SERVER_ROOT, "..", "web");
-const OUT_DIR = path.join(SERVER_ROOT, "dist-exe");
+
+const PKG_TARGET = process.env.PKG_TARGET || "node22-win-x64";
+const IS_WIN = PKG_TARGET.includes("win");
+const BIN_NAME = process.env.BIN_NAME || (IS_WIN ? "Nugis.exe" : "Nugis");
+const OUT_DIR = path.join(SERVER_ROOT, process.env.OUT_DIR || "dist-exe");
 const OBFUSCATE = process.env.SKIP_OBFUSCATE !== "1"; // SKIP_OBFUSCATE=1 per build di debug più veloci
 
 function run(cmd, cwd, env) {
@@ -37,6 +56,8 @@ function copyDir(src, dest) {
   }
 }
 
+console.log(`Target pkg: ${PKG_TARGET}  ->  ${OUT_DIR}/${BIN_NAME}`);
+
 console.log("=== 1/6: pulizia build precedente ===");
 fs.rmSync(OUT_DIR, { recursive: true, force: true });
 fs.mkdirSync(OUT_DIR, { recursive: true });
@@ -44,7 +65,7 @@ fs.mkdirSync(OUT_DIR, { recursive: true });
 console.log("=== 2/6: build del pannello web (origine relativa, stesso processo del server) ===");
 run("npx vite build", WEB_ROOT, { VITE_API_URL: "" });
 
-console.log("=== 3/6: generazione client Prisma (se non già presente) ===");
+console.log("=== 3/6: generazione client Prisma (tutte le piattaforme, vedi schema.prisma binaryTargets) ===");
 if (!fs.existsSync(path.join(SERVER_ROOT, "src/generated/prisma-client"))) {
   run("npx prisma generate", SERVER_ROOT);
 }
@@ -85,15 +106,54 @@ if (OBFUSCATE) {
   console.log("=== 5/6: offuscamento SALTATO (SKIP_OBFUSCATE=1) ===");
 }
 
-console.log("=== 6/6: pacchettizzazione con pkg ===");
-run(`npx pkg dist/index.js --targets node22-win-x64 --output "${path.join(OUT_DIR, "Nugis.exe")}"`, SERVER_ROOT);
+console.log(`=== 6/6: pacchettizzazione con pkg (${PKG_TARGET}) ===`);
+run(`npx pkg dist/index.js --targets ${PKG_TARGET} --output "${path.join(OUT_DIR, BIN_NAME)}"`, SERVER_ROOT);
 
-console.log("Copia risorse esterne accanto all'exe (Prisma non è impacchettabile in un singolo binario)...");
+console.log("Copia risorse esterne accanto al binario (Prisma non è impacchettabile in un singolo file)...");
 copyDir(path.join(SERVER_ROOT, "src/generated/prisma-client"), path.join(OUT_DIR, "generated/prisma-client"));
+
+// Il client generato porta i motori nativi di TUTTE le piattaforme (vedi schema.prisma
+// binaryTargets), utile mentre si sviluppa/genera una volta sola, ma inutile (e pesante,
+// ~15-30MB a motore) da spedire dentro il pacchetto di UNA piattaforma sola. Teniamo solo
+// i motori rilevanti per questo target, cancelliamo gli altri.
+const ENGINE_KEEP_PATTERNS = {
+  win: [/^query_engine-windows\.dll\.node$/],
+  "linux-x64": [/^libquery_engine-debian-openssl-3\.0\.x\.so\.node$/, /^libquery_engine-debian-openssl-1\.1\.x\.so\.node$/, /^libquery_engine-linux-musl\.so\.node$/],
+  "linux-arm64": [/^libquery_engine-linux-arm64-openssl-3\.0\.x\.so\.node$/, /^libquery_engine-linux-musl-arm64-openssl-3\.0\.x\.so\.node$/],
+  "macos-x64": [/^libquery_engine-darwin\.dylib\.node$/],
+  "macos-arm64": [/^libquery_engine-darwin-arm64\.dylib\.node$/],
+};
+function platformKeyFor(target) {
+  if (target.includes("win")) return "win";
+  if (target.includes("linux") && target.includes("arm64")) return "linux-arm64";
+  if (target.includes("linux")) return "linux-x64";
+  if (target.includes("macos") && target.includes("arm64")) return "macos-arm64";
+  if (target.includes("macos")) return "macos-x64";
+  return null;
+}
+const keepPatterns = ENGINE_KEEP_PATTERNS[platformKeyFor(PKG_TARGET)];
+if (keepPatterns) {
+  const engineDir = path.join(OUT_DIR, "generated/prisma-client");
+  for (const entry of fs.readdirSync(engineDir)) {
+    const isEngineFile = /query_engine-.*\.node$/.test(entry);
+    if (isEngineFile && !keepPatterns.some((re) => re.test(entry))) {
+      fs.rmSync(path.join(engineDir, entry));
+    }
+  }
+}
 copyDir(path.join(SERVER_ROOT, "prisma/migrations"), path.join(OUT_DIR, "prisma/migrations"));
 fs.copyFileSync(path.join(SERVER_ROOT, "prisma/schema.prisma"), path.join(OUT_DIR, "prisma/schema.prisma"));
 copyDir(path.join(WEB_ROOT, "dist"), path.join(OUT_DIR, "public"));
 fs.copyFileSync(path.join(SERVER_ROOT, ".env.example"), path.join(OUT_DIR, ".env.example"));
 
+if (!IS_WIN) {
+  // pkg non porta sempre il bit eseguibile su binari cross-built da Windows.
+  try {
+    fs.chmodSync(path.join(OUT_DIR, BIN_NAME), 0o755);
+  } catch {
+    /* ignorato su piattaforme dove chmod non ha senso (es. build da Windows per Linux/macOS) */
+  }
+}
+
 console.log(`\n✅ Fatto. Eseguibile e risorse in: ${OUT_DIR}`);
-console.log(`   Prima del primo avvio: copia .env.example in .env dentro dist-exe/ e compilalo.`);
+console.log(`   Prima del primo avvio: copia .env.example in .env dentro ${path.basename(OUT_DIR)}/ e compilalo.`);

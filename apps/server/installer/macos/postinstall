@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# Script "postinstall" del pacchetto NugisInstaller.pkg (eseguito da /usr/sbin/installer
+# come root, subito dopo che pkgbuild ha copiato i file in NUGIS_DIR). Non interattivo
+# per costruzione (un .pkg a doppio clic non ha un vero prompt di testo) — a differenza
+# del wizard Windows (email/password scelte dall'utente) o di install.sh (che chiede a
+# terminale), qui genera una password admin CASUALE e la scrive in un file da leggere
+# una volta sola. Meno raffinato, ma niente credenziali fisse/prevedibili.
+set -euo pipefail
+
+NUGIS_DIR="/usr/local/nugis"
+PLIST_PATH="/Library/LaunchDaemons/com.nugis.app.plist"
+CREDS_FILE="$NUGIS_DIR/CREDENZIALI_INIZIALI.txt"
+
+gen_secret() {
+  if command -v openssl >/dev/null 2>&1; then
+    openssl rand -base64 48
+  else
+    head -c 48 /dev/urandom | base64
+  fi
+}
+
+if [ ! -f "$NUGIS_DIR/.env" ]; then
+  ADMIN_PASSWORD="$(openssl rand -base64 18 2>/dev/null || head -c 18 /dev/urandom | base64)"
+
+  cat > "$NUGIS_DIR/.env" <<EOF
+# Generato automaticamente da NugisInstaller.pkg il $(date -Iseconds 2>/dev/null || date).
+DATABASE_URL="file:$NUGIS_DIR/nugis.db"
+TELEGRAM_BOT_TOKEN=""
+TELEGRAM_API_ID=""
+TELEGRAM_API_HASH=""
+ENCRYPTION_KEY="$(gen_secret)"
+LLM_PROVIDER="ollama"
+ANTHROPIC_API_KEY=""
+ANTHROPIC_MODEL="claude-sonnet-5"
+OPENAI_API_KEY=""
+OPENAI_MODEL="gpt-4o-mini"
+DEEPSEEK_API_KEY=""
+ADMIN_JWT_SECRET="$(gen_secret)"
+ADMIN_DEFAULT_EMAIL="admin@nugis.local"
+ADMIN_DEFAULT_PASSWORD="$ADMIN_PASSWORD"
+PORT=4000
+WEB_ORIGIN="http://localhost:4000"
+LICENSE_SERVER_URL=""
+LICENSE_KEY=""
+EOF
+  chmod 600 "$NUGIS_DIR/.env"
+
+  cat > "$CREDS_FILE" <<EOF
+Credenziali iniziali del pannello Nugis (http://localhost:4000):
+
+  email:    admin@nugis.local
+  password: $ADMIN_PASSWORD
+
+Cambia email e password dal pannello (o modificando $NUGIS_DIR/.env e riavviando
+il servizio: sudo launchctl kickstart -k system/com.nugis.app) e poi CANCELLA
+questo file: sudo rm "$CREDS_FILE"
+EOF
+  chmod 600 "$CREDS_FILE"
+fi
+
+chmod 755 "$NUGIS_DIR/Nugis" 2>/dev/null || true
+[ -f "$NUGIS_DIR/uninstall.sh" ] && chmod 755 "$NUGIS_DIR/uninstall.sh"
+
+sed "s|__NUGIS_DIR__|$NUGIS_DIR|g" "$NUGIS_DIR/nugis.plist.template" > "$PLIST_PATH"
+chown root:wheel "$PLIST_PATH"
+chmod 644 "$PLIST_PATH"
+
+launchctl bootout system "$PLIST_PATH" 2>/dev/null || true
+launchctl bootstrap system "$PLIST_PATH"
+launchctl enable "system/com.nugis.app"
+
+exit 0

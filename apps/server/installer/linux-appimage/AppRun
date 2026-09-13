@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# Entry point dell'AppImage di Nugis. A differenza dell'installer tarball+systemd
+# (installer/linux/), questo NON richiede root né systemd: si scarica un file solo
+# (nugis-x86_64.AppImage o nugis-aarch64.AppImage), lo si rende eseguibile e si lancia
+# — gira su qualunque distro (il payload è già dentro l'AppImage, nessuna dipendenza
+# dal package manager di sistema).
+#
+# L'AppImage montata (o estratta) è di SOLA LETTURA: .env/database NON possono vivere
+# accanto al binario come nell'installer tradizionale. Vivono invece in una cartella
+# "nugis-data" accanto al file .AppImage stesso (variabile $APPIMAGE, impostata dal
+# runtime AppImage) — così i dati sopravvivono anche quando l'utente sostituisce
+# l'AppImage con una versione più recente.
+set -euo pipefail
+
+HERE="$(cd "$(dirname "$(readlink -f "${0}")")" && pwd)"
+BIN="$HERE/usr/bin/Nugis"
+
+if [ -n "${APPIMAGE:-}" ]; then
+  DATA_DIR="$(dirname "$(readlink -f "$APPIMAGE")")/nugis-data"
+else
+  # Lanciato direttamente dall'AppDir estratta (test/debug), non da un vero .AppImage.
+  DATA_DIR="$HERE/nugis-data"
+fi
+mkdir -p "$DATA_DIR"
+
+ENV_FILE="$DATA_DIR/.env"
+if [ ! -f "$ENV_FILE" ]; then
+  gen_secret() {
+    if command -v openssl >/dev/null 2>&1; then openssl rand -base64 48
+    else head -c 48 /dev/urandom | base64; fi
+  }
+
+  echo "Primo avvio di Nugis: creo la configurazione in $DATA_DIR"
+  if [ -t 0 ] && [ -z "${NUGIS_ADMIN_EMAIL:-}" ]; then
+    read -r -p "Email amministratore (login al pannello): " NUGIS_ADMIN_EMAIL
+    while [ -z "${NUGIS_ADMIN_PASSWORD:-}" ] || [ "${#NUGIS_ADMIN_PASSWORD}" -lt 8 ]; do
+      read -r -s -p "Password amministratore (minimo 8 caratteri): " NUGIS_ADMIN_PASSWORD
+      echo
+    done
+  else
+    # Nessun terminale interattivo (es. lanciato da un servizio systemd --user, o da
+    # uno script automatico): usa NUGIS_ADMIN_EMAIL/PASSWORD se già nell'ambiente,
+    # altrimenti genera credenziali provvisorie da cambiare subito dal pannello.
+    NUGIS_ADMIN_EMAIL="${NUGIS_ADMIN_EMAIL:-admin@nugis.local}"
+    NUGIS_ADMIN_PASSWORD="${NUGIS_ADMIN_PASSWORD:-$(gen_secret | head -c 20)}"
+    echo "Credenziali iniziali: $NUGIS_ADMIN_EMAIL / $NUGIS_ADMIN_PASSWORD (cambiale dal pannello dopo il primo accesso)"
+  fi
+
+  cat > "$ENV_FILE" <<EOF
+DATABASE_URL="file:$DATA_DIR/nugis.db"
+TELEGRAM_BOT_TOKEN=""
+TELEGRAM_API_ID=""
+TELEGRAM_API_HASH=""
+ENCRYPTION_KEY="$(gen_secret)"
+LLM_PROVIDER="ollama"
+ANTHROPIC_API_KEY=""
+ANTHROPIC_MODEL="claude-sonnet-5"
+OPENAI_API_KEY=""
+OPENAI_MODEL="gpt-4o-mini"
+DEEPSEEK_API_KEY=""
+ADMIN_JWT_SECRET="$(gen_secret)"
+ADMIN_DEFAULT_EMAIL="$NUGIS_ADMIN_EMAIL"
+ADMIN_DEFAULT_PASSWORD="$NUGIS_ADMIN_PASSWORD"
+PORT=4000
+WEB_ORIGIN="http://localhost:4000"
+LICENSE_SERVER_URL=""
+LICENSE_KEY=""
+EOF
+  chmod 600 "$ENV_FILE"
+fi
+
+# Carica $ENV_FILE come variabili d'ambiente vere (non un .env letto da dentro il
+# binario: l'AppImage montata è read-only, "Nugis" non potrebbe scriverci comunque,
+# e su un rerun leggerebbe da lì solo se lo trovasse — qui lo forziamo dall'esterno).
+set -a
+# shellcheck disable=SC1090
+source "$ENV_FILE"
+set +a
+
+exec "$BIN" "$@"

@@ -1,0 +1,15 @@
+[Unit]
+Description=Nugis (AppImage) — bot Telegram multi-creator + pannello admin
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=__APPIMAGE_PATH__
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

@@ -13,12 +13,13 @@ lanciare a mano ogni volta.
 | Sistema | File da usare | Richiede |
 |---|---|---|
 | Windows 10/11 | `NugisSetup.exe` | Nulla di speciale, doppio clic |
-| Linux (Ubuntu, Debian, Fedora, ecc. — qualunque processore) | `nugis-linux-universal.tar.gz` | Terminale + `sudo` |
+| Linux (Ubuntu, Debian, Fedora, Arch, ecc.) | `nugis-x86_64.AppImage` o `nugis-aarch64.AppImage` | Nulla — `chmod +x` e via, nessun root/systemd obbligatorio |
 | macOS (Intel o Apple Silicon) | `nugis-macos-universal.tar.gz` (o `NugisInstaller.pkg`) | Terminale + `sudo` (il `.pkg` è doppio clic) |
 
-Un solo file per Linux e uno per macOS: il pacchetto contiene i binari per entrambi i
-processori (x64/Intel e arm64/Apple Silicon) e sceglie da solo quello giusto durante
-l'installazione — non devi sapere tu quale ti serve.
+Su Linux scegli il file in base al processore: `x86_64` per PC/server normali,
+`aarch64` per ARM (Raspberry Pi, server ARM, ecc. — `uname -m` te lo dice). Su macOS
+un solo file per Intel e Apple Silicon: sceglie da solo il binario giusto durante
+l'installazione.
 
 ## 2. Windows
 
@@ -34,27 +35,45 @@ l'installazione — non devi sapere tu quale ti serve.
 4. Alla fine si apre da solo il browser su `http://localhost:4000`. Accedi con
    l'email/password appena scelte.
 
-## 3. Linux
-
-Da terminale, nella cartella dove hai scaricato il file:
+## 3. Linux (AppImage — nessuna installazione)
 
 ```bash
-tar -xzf nugis-linux-universal.tar.gz
-cd nugis-linux-universal
-sudo ./install.sh
+chmod +x nugis-x86_64.AppImage      # o nugis-aarch64.AppImage
+./nugis-x86_64.AppImage
 ```
 
-Ti chiederà email e password admin (minimo 8 caratteri), poi installa e avvia tutto da
-solo. Alla fine vedrai `http://localhost:4000` — aprilo dal browser.
+Al primo avvio ti chiede (da terminale) email e password admin, poi crea la sua
+configurazione in una cartella `nugis-data/` accanto al file `.AppImage` (lì restano
+anche il database e i backup — se sposti/aggiorni l'AppImage, sposta anche questa
+cartella). Apri `http://localhost:4000` dal browser. Finché il terminale resta aperto
+il programma resta acceso; chiudendolo (Ctrl+C) si ferma.
 
-Comandi utili dopo l'installazione:
+**Vuoi che resti sempre acceso in background, anche a terminale chiuso?** Serve
+systemd (praticamente ogni distro moderna): scarica anche `install-autostart.sh` (o
+prendilo dal repository, cartella `installer/linux-appimage/`) e lancia:
 
 ```bash
-sudo systemctl status nugis      # è acceso?
-sudo journalctl -u nugis -f      # log in tempo reale
-sudo systemctl restart nugis     # riavvia
-sudo /opt/nugis/uninstall.sh     # disinstalla (conserva i dati)
+./install-autostart.sh "$(pwd)/nugis-x86_64.AppImage"
 ```
+
+Comandi utili dopo:
+
+```bash
+systemctl --user status nugis           # è acceso?
+journalctl --user -u nugis -f           # log in tempo reale
+systemctl --user restart nugis          # riavvia
+systemctl --user disable --now nugis    # disattiva l'avvio automatico
+```
+
+Per farlo partire anche prima del login (server headless che si riavvia da solo),
+una tantum: `sudo loginctl enable-linger "$USER"`.
+
+### In alternativa: un vero servizio di sistema (root, systemd)
+
+Se preferisci un servizio installato "sul serio" (Program Files-style, un utente di
+sistema dedicato) invece del formato AppImage portabile, è disponibile anche
+`nugis-linux-universal.tar.gz` con `sudo ./install.sh` — stesso risultato finale, più
+simile all'installer Windows. Vedi la guida tecnica per i dettagli.
 
 ## 4. macOS
 
@@ -99,10 +118,11 @@ sudo /usr/local/nugis/uninstall.sh              # disinstalla (conserva i dati)
 
 ## 6. Disinstallare
 
-Ogni piattaforma conserva **per default** database e configurazione (`.env`) quando
+Ogni piattaforma conserva **per default** database e configurazione quando
 disinstalli — nessun dato viene perso "per sbaglio". Per cancellare anche quelli:
 
-- Linux: `sudo /opt/nugis/uninstall.sh --purge`
+- Linux (AppImage): cancella il file `.AppImage` e la cartella `nugis-data/` accanto ad esso (e, se avevi attivato l'avvio automatico: `systemctl --user disable --now nugis`)
+- Linux (installer tradizionale): `sudo /opt/nugis/uninstall.sh --purge`
 - macOS: `sudo /usr/local/nugis/uninstall.sh --purge`
 - Windows: dal Pannello di controllo, "Disinstalla Nugis" (rimuove sempre tutto,
   incluso il database — su Windows non esiste ancora l'opzione "conserva i dati")

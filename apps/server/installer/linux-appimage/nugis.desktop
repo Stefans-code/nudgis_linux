@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Nugis
+Comment=Bot Telegram multi-creator + pannello admin
+Exec=AppRun
+Icon=nugis
+Categories=Utility;Network;
+Terminal=true

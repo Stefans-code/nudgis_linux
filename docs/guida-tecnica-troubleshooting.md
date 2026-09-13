@@ -20,6 +20,22 @@ Legenda stato: ✅ risolto e verificato dal vivo · ⚠️ noto, non ancora test
 
 ## 2. Installazione — Linux
 
+Due formati disponibili, stesso codice sotto: **AppImage** (`nugis-x86_64.AppImage` /
+`nugis-aarch64.AppImage`, formato principale — un file solo, nessuna installazione,
+gira su qualunque distro, come Datarium_Linux) oppure il **tarball tradizionale**
+(`nugis-linux-universal.tar.gz` + `sudo ./install.sh`, vero servizio di sistema con
+utente dedicato). Scegli AppImage a meno di avere un motivo specifico per il secondo.
+
+| Problema | Causa | Soluzione |
+|---|---|---|
+| L'AppImage chiede email/password ogni volta che la avvio | Non hai un `nugis-data/.env` accanto al file — o l'hai spostata senza portarti dietro quella cartella | La cartella `nugis-data/` DEVE stare accanto al file `.AppImage`: se sposti/rinomini l'uno, sposta anche l'altra |
+| L'AppImage si ferma appena chiudo il terminale | Comportamento normale: senza autostart (vedi sotto) il processo vive finché il terminale resta aperto | Usa `install-autostart.sh` per un servizio `systemd --user` che resta acceso anche a terminale chiuso |
+| `install-autostart.sh` fallisce con "systemd non trovato" | Distro senza systemd (raro: Alpine di default, Devuan, alcuni container) | Lancia l'AppImage a mano, o integrala nel tuo init system (nessun autostart automatico disponibile) |
+| "Permission denied" lanciando il file `.AppImage` | Manca il bit eseguibile (es. scaricato da browser, che spesso lo toglie) | `chmod +x nugis-*.AppImage` |
+| L'AppImage non parte, nessun errore visibile | Alcuni ambienti (container Docker senza `/dev/fuse`, certi runner CI) non supportano il automount FUSE delle AppImage | Lanciala con `./nugis-x86_64.AppImage --appimage-extract-and-run` (estrae ed esegue senza FUSE) |
+
+**Solo per il tarball tradizionale (`install.sh`, servizio di sistema root+systemd):**
+
 | Problema | Causa | Soluzione |
 |---|---|---|
 | "systemd non rilevato" durante `install.sh` | Distro senza systemd (Alpine di default, Devuan, alcuni container minimal) | I file vengono comunque installati; avvia a mano: `sudo -u nugis /opt/nugis/Nugis`, oppure integralo nel tuo init system (OpenRC, runit, ecc.) |

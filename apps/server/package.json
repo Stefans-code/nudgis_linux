@@ -14,6 +14,7 @@
     "build:exe": "node scripts/build-exe.js",
     "build:installer": "node scripts/build-installer.js",
     "build:installer:linux": "node scripts/build-installer-linux.js",
+    "build:appimage:linux": "node scripts/build-appimage-linux.js",
     "build:installer:macos": "node scripts/build-installer-macos.js"
   },
   "dependencies": {

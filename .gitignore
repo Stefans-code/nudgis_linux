@@ -35,6 +35,8 @@ brief_text.txt
 # pesanti per il repo, si rigenerano con npm run build:exe / build:installer.
 apps/server/dist-exe/
 apps/server/dist-exe-*/
+apps/server/AppDir/
+apps/server/appimagetool-*.AppImage
 apps/server/installer-output/
 apps/server/installer-output-linux/
 apps/server/installer-output-macos/

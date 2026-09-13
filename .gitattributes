@@ -8,3 +8,4 @@
 *.service.template text eol=lf
 *.plist.template text eol=lf
 installer/macos/postinstall text eol=lf
+installer/linux-appimage/AppRun text eol=lf

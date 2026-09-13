@@ -1,4 +1,4 @@
-name: Build & test Linux installer (universale x64+arm64)
+name: Build & test Nugis AppImage (Linux, x64+arm64 nativi)
 
 on:
   workflow_dispatch: {}
@@ -10,13 +10,24 @@ on:
       - ".github/workflows/build-linux-installer.yml"
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
+  build-and-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Un job NATIVO per arch (come Datarium_Linux) invece di fabbricare/emulare
+          # l'arch diversa sullo stesso runner: niente pkg "fabricate" cross-arch, niente
+          # QEMU — più semplice e più affidabile (13/09/2026: l'esecuzione emulata
+          # "nuda" fuori Docker si era dimostrata inaffidabile, si bloccava senza errori).
+          - os: ubuntu-latest
+            arch: x64
+            appimage_arch: x86_64
+          - os: ubuntu-24.04-arm
+            arch: arm64
+            appimage_arch: aarch64
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-
-      - name: Registra QEMU (serve solo a pkg per FABBRICARE il binario arm64 su questo runner x64)
-        uses: docker/setup-qemu-action@v3
 
       - uses: actions/setup-node@v4
         with:
@@ -29,62 +40,66 @@ jobs:
         run: npx prisma generate
         working-directory: apps/server
 
-      - name: Build installer Linux universale (x64 + arm64 in un solo pacchetto)
-        run: npm run build:installer:linux -w apps/server
+      - name: Build AppImage (${{ matrix.arch }}, nativo)
+        run: npm run build:appimage:linux -w apps/server
         env:
           SKIP_OBFUSCATE: "1" # build CI di verifica: l'offuscamento non cambia se il binario parte o no, solo la velocità
 
-      - name: Verifica che entrambi i binari siano presenti e del tipo giusto
-        run: |
-          cd apps/server/installer-output-linux/nugis-linux-universal
-          file Nugis-x64 | tee /tmp/file-x64.txt | grep -q "x86-64"
-          file Nugis-arm64 | tee /tmp/file-arm64.txt | grep -q "ARM aarch64"
+      - name: Verifica il tipo di file
+        run: file "apps/server/installer-output-linux/nugis-${{ matrix.appimage_arch }}.AppImage" | grep -q "ELF"
 
-      - name: Carica il pacchetto come artifact (lo scaricano i job di test)
-        uses: actions/upload-artifact@v4
-        with:
-          name: nugis-linux-universal
-          path: apps/server/installer-output-linux/nugis-linux-universal.tar.gz
-          retention-days: 30
-
-  # Esecuzione reale su runner NATIVI (non emulati) per ciascuna arch — l'esecuzione di
-  # un binario arm64 sotto QEMU "nudo" (fuori da Docker, dove il binfmt di
-  # docker/setup-qemu-action è pensato per girare) si è dimostrata inaffidabile in
-  # pratica (13/09/2026: il processo non produceva output né errore, si bloccava e
-  # basta) — un runner arm64 vero (ubuntu-24.04-arm, disponibile gratis su GitHub
-  # Actions) evita il problema alla radice invece di provare a renderlo affidabile.
-  test:
-    needs: build
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            arch: x64
-          - os: ubuntu-24.04-arm
-            arch: arm64
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: nugis-linux-universal
-
-      - name: Test reale (${{ matrix.arch }}, runner nativo) — installa via install.sh e interroga /health
+      - name: Test reale — lancia l'AppImage direttamente (nessuna installazione) e interroga /health
         run: |
           set -euo pipefail
-          tar -xzf nugis-linux-universal.tar.gz
-          cd nugis-linux-universal
-          sudo NUGIS_ADMIN_EMAIL=ci@nugis.test NUGIS_ADMIN_PASSWORD='ci-test-password-123' ./install.sh
-          for i in $(seq 1 15); do
+          cd apps/server/installer-output-linux
+          chmod +x "nugis-${{ matrix.appimage_arch }}.AppImage"
+          NUGIS_ADMIN_EMAIL=ci@nugis.test NUGIS_ADMIN_PASSWORD='ci-test-password-123' \
+            ./nugis-${{ matrix.appimage_arch }}.AppImage --appimage-extract-and-run > nugis-appimage.log 2>&1 &
+          PID=$!
+          ok=0
+          for i in $(seq 1 20); do
+            if curl -fsS http://localhost:4000/health; then ok=1; echo; break; fi
+            echo "in attesa dell'AppImage... ($i/20)"; sleep 2
+          done
+          if [ "$ok" != "1" ]; then
+            echo "--- log ---"; cat nugis-appimage.log
+            kill "$PID" 2>/dev/null || true
+            exit 1
+          fi
+          curl -fsS http://localhost:4000/health | grep -q '"ok":true'
+          echo "✅ /health risponde correttamente — nessuna installazione, nessun root, nessun systemd"
+          test -f nugis-data/.env && echo "✅ Configurazione persistente creata in nugis-data/"
+          kill "$PID" 2>/dev/null || true
+          rm -rf nugis-data
+
+      - name: Test reale dell'avvio automatico opzionale (systemd --user)
+        run: |
+          set -euo pipefail
+          cd apps/server/installer-output-linux
+          ABS="$(readlink -f nugis-${{ matrix.appimage_arch }}.AppImage)"
+          # systemd --user richiede una sessione utente con bus dbus: la simuliamo come
+          # fa comunemente la CI (loginctl non serve per il solo test, systemctl --user
+          # funziona già nella sessione del runner).
+          bash ../installer/linux-appimage/install-autostart.sh "$ABS"
+          for i in $(seq 1 20); do
             if curl -fsS http://localhost:4000/health; then echo; break; fi
-            echo "in attesa del servizio... ($i/15)"; sleep 2
+            echo "in attesa del servizio utente... ($i/20)"; sleep 2
           done
           curl -fsS http://localhost:4000/health | grep -q '"ok":true'
-          echo "✅ /health risponde correttamente (arch nativa ${{ matrix.arch }}, via systemd)"
-          sudo systemctl status nugis --no-pager
-          sudo /opt/nugis/uninstall.sh --purge
-          echo "✅ Disinstallazione completata senza errori"
+          echo "✅ Avvio automatico via systemd --user funziona"
+          systemctl --user disable --now nugis
+          rm -rf nugis-data
 
-      - name: Diagnostica in caso di fallimento (log del servizio)
+      - name: Diagnostica in caso di fallimento
         if: failure()
-        run: sudo journalctl -u nugis --no-pager -e || true
+        run: |
+          cd apps/server/installer-output-linux
+          cat nugis-appimage.log 2>/dev/null || true
+          journalctl --user -u nugis --no-pager -e 2>/dev/null || true
+
+      - name: Carica l'AppImage come artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nugis-${{ matrix.appimage_arch }}
+          path: apps/server/installer-output-linux/nugis-${{ matrix.appimage_arch }}.AppImage
+          retention-days: 30

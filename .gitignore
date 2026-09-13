@@ -1,0 +1,35 @@
+node_modules/
+dist/
+build/
+apps/*/src/generated/
+.env
+*.env
+!*.env.example
+apps/server/prisma/dev.db
+apps/server/prisma/dev.db-journal
+apps/server/prisma/test.db
+apps/server/prisma/test.db-journal
+apps/server/backups/
+# Cartella "prisma/prisma" annidata per errore (DATABASE_URL relativo risolto rispetto
+# alla cartella schema.prisma, non alla cwd) - contiene DB reali e backup, mai da committare.
+apps/server/prisma/prisma/
+apps/license-server/prisma/licenses.db
+apps/license-server/prisma/licenses.db-journal
+.env.docker
+.DS_Store
+*.log
+
+# Materiale del brief cliente: dati riservati + screenshot con API key DeepSeek esposta
+# in chiaro (pagina 5) - non deve mai finire su un repo, nemmeno privato.
+Brief rapido chatbot.pdf
+brief_images/
+brief_text.txt
+
+# Output di build binari (exe/installer) - artefatti generati, non sorgenti; troppo
+# pesanti per il repo, si rigenerano con npm run build:exe / build:installer.
+apps/server/dist-exe/
+apps/server/installer-output/
+apps/server/dist-linux/
+apps/server/dist-macos/
+apps/server/installer-output-linux/
+apps/server/installer-output-macos/

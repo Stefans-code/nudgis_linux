@@ -1,0 +1,58 @@
+{
+  "name": "nugis-server",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json && node scripts/copy-generated-client.js",
+    "start": "node dist/index.js",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "build:exe": "node scripts/build-exe.js",
+    "build:installer": "node scripts/build-installer.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.32.1",
+    "@prisma/client": "^5.20.0",
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.0",
+    "grammy": "^1.30.0",
+    "jsonwebtoken": "^9.0.2",
+    "node-cron": "^3.0.3",
+    "telegram": "^2.26.22",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/jsonwebtoken": "^9.0.7",
+    "@types/node": "^22.7.4",
+    "@types/node-cron": "^3.0.11",
+    "@yao-pkg/pkg": "^6.22.0",
+    "javascript-obfuscator": "^5.6.0",
+    "prisma": "^5.20.0",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.2",
+    "vitest": "^4.1.11"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
+  },
+  "pkg": {
+    "assets": [
+      "dist/generated/prisma-client/**/*",
+      "prisma/migrations/**/*",
+      "prisma/schema.prisma"
+    ],
+    "targets": [
+      "node22-win-x64"
+    ],
+    "outputPath": "dist-exe"
+  }
+}

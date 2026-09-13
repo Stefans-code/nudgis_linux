@@ -1,0 +1,12 @@
+node_modules
+**/node_modules
+**/dist
+**/*.env
+!**/*.env.example
+**/prisma/dev.db
+**/prisma/prisma
+**/prisma/test.db
+**/backups
+.git
+*.md
+Checklist_Setup_Chatbot.pdf

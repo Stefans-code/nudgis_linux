@@ -1,0 +1,40 @@
+version: "3.9"
+
+# Pacchetto on-premise: "docker compose up -d" e il pannello è su http://localhost:8080.
+# Copia .env.docker.example in .env.docker e compilalo PRIMA di avviare (vedi
+# docs/docker-deployment.md per la guida completa).
+
+services:
+  server:
+    build:
+      context: .
+      dockerfile: apps/server/Dockerfile
+    env_file:
+      - .env.docker
+    environment:
+      NODE_ENV: production
+      # Path fisso dentro il volume persistente, non nella cartella prisma/ del
+      # progetto (evita l'ambiguità dei path relativi di Prisma).
+      DATABASE_URL: "file:/data/nugis.db"
+      WEB_ORIGIN: "http://localhost:8080"
+    volumes:
+      - nugis_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:4000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    ports:
+      - "8080:80"
+    depends_on:
+      - server
+    restart: unless-stopped
+
+volumes:
+  nugis_data:

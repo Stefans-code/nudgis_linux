@@ -1,0 +1,325 @@
+<html><head>
+<style>
+  @page {
+    size: A4;
+    margin: 2.2cm 1.8cm 2cm 1.8cm;
+    @frame footer_frame {
+      -pdf-frame-content: footer_content;
+      bottom: 1cm; margin-left: 1.8cm; margin-right: 1.8cm; height: 1cm;
+    }
+  }
+  body { font-family: Helvetica, sans-serif; font-size: 10pt; color: #1a1a1a; line-height: 1.45; }
+  h1 { font-size: 18pt; color: #16324f; border-bottom: 2px solid #16324f; padding-bottom: 6px; margin-top: 0; }
+  h2 { font-size: 13pt; color: #16324f; margin-top: 18px; }
+  h3 { font-size: 11pt; color: #2a4d6e; margin-top: 14px; }
+  p { margin: 6px 0; }
+  code { font-family: Courier, monospace; background-color: #f0f0f0; padding: 1px 3px; font-size: 9pt; }
+  pre { font-family: Courier, monospace; background-color: #f5f5f5; border: 0.5px solid #ccc;
+        padding: 8px; font-size: 8.5pt; line-height: 1.35; }
+  pre code { background-color: transparent; padding: 0; }
+  blockquote { border-left: 3px solid #999; margin-left: 0; padding-left: 10px; color: #444; }
+  table { border-collapse: collapse; width: 100%; margin: 8px 0; }
+  th, td { border: 0.5px solid #999; padding: 4px 6px; font-size: 9pt; text-align: left; }
+  th { background-color: #e8eef3; }
+  ul, ol { margin: 4px 0; padding-left: 22px; }
+  li { margin: 2px 0; }
+  a { color: #16324f; }
+  hr { border: none; border-top: 0.5px solid #ccc; margin: 10px 0; }
+  .cover { text-align: center; margin-top: 6cm; }
+  .cover h1 { border: none; font-size: 26pt; }
+  .cover p { color: #555; font-size: 11pt; }
+</style>
+</head><body>
+<div id="footer_content" style="text-align: center; font-size: 8pt; color: #888;">
+  Nugis &mdash; Documentazione tecnica interna
+</div>
+
+<div class="cover">
+  <h1>Nugis</h1>
+  <p>Documentazione tecnica</p>
+  <p>Installer &middot; Eseguibile &middot; Licenze &middot; Bot Telegram</p>
+  <p style="margin-top: 40px; font-size: 9pt; color: #888;">Generato il 29/08/2026</p>
+</div>
+<div style="page-break-after: always;"></div>
+<div class="doc-section"><h1 id="installer-windows-nugissetupexe">Installer Windows (NugisSetup.exe)</h1>
+<p>Non va confuso con <code>Nugis.exe</code> (vedi <code>docs/exe-packaging.md</code>): sono due cose diverse.</p>
+<pre><code>NugisSetup.exe   &lt;- lo lanci UNA VOLTA sul PC del cliente. Copia i file, chiede le
+                    credenziali admin e la licenza, poi non serve più.
+Nugis.exe        &lt;- l'app vera, quella che l'installer mette dentro
+                    Program Files\Nugis e fa partire (bot + API + pannello web,
+                    tutto in un solo processo).
+</code></pre>
+<h2 id="come-si-costruisce">Come si costruisce</h2>
+<pre><code class="language-bash">npm run build:installer -w apps/server
+</code></pre>
+<p>Fa due cose in sequenza (<code>scripts/build-installer.js</code>):
+1. Builda <code>Nugis.exe</code> (<code>scripts/build-exe.js</code>, stesso processo di <code>docs/exe-packaging.md</code>)
+2. Lo pacchettizza con <strong>Inno Setup 6</strong> (<code>installer/nugis.iss</code>) in un unico
+   <code>installer-output/NugisSetup.exe</code></p>
+<p>Richiede Inno Setup 6 installato (<code>ISCC.exe</code>) sulla macchina dove fai la build — non
+sulla macchina del cliente, solo su quella dello sviluppatore/ufficio.</p>
+<p>Per una build di test più veloce (salta l'offuscamento):</p>
+<pre><code class="language-bash">SKIP_OBFUSCATE=1 npm run build:installer -w apps/server
+</code></pre>
+<h2 id="cosa-fa-linstaller-in-ordine">Cosa fa l'installer, in ordine</h2>
+<ol>
+<li>Chiede la cartella di installazione (default <code>Program Files\Nugis</code>)</li>
+<li><strong>Pagina "Account amministratore"</strong>: email + password (min. 8 caratteri) + conferma.
+   Questa email <strong>non è usata per inviare nulla</strong> — nel progetto non esiste nessuna
+   configurazione SMTP/invio email (verificato: zero occorrenze di <code>nodemailer</code>/<code>smtp</code>
+   nel codice). È solo lo username di login per il pannello web, salvato nel database
+   locale di quell'installazione.</li>
+<li><strong>Pagina "Licenza" (opzionale)</strong>: indirizzo del license-server dell'ufficio + chiave
+   <code>NUGIS-XXXX-...</code>. Si può lasciare vuota per un uso interno senza restrizioni — vedi
+   <code>docs/license-server.md</code> per come generarne una.</li>
+<li>Copia i file, poi <strong>genera da solo il <code>.env</code></strong>: <code>DATABASE_URL</code> assoluto puntato
+   dentro la cartella di installazione, <code>ADMIN_JWT_SECRET</code> ed <code>ENCRYPTION_KEY</code> casuali
+   (generati con l'RNG crittografico di PowerShell, non un generatore debole) — questi
+   due non vengono mai chiesti all'utente, sono segreti tecnici, non credenziali da
+   scegliere o ricordare.</li>
+<li>Registra un'<strong>attività pianificata di Windows</strong> (<code>schtasks</code>) che avvia <code>Nugis.exe</code>
+   all'accensione del PC, come account SYSTEM, in sessione non interattiva: niente
+   finestra console visibile, e se il processo termina riparte da solo (fino a 3
+   tentativi/minuto).</li>
+<li>Avvia subito l'attività e apre il browser su <code>http://localhost:4000</code>.</li>
+</ol>
+<p>La disinstallazione (dal Pannello di controllo o dal collegamento nel menu Start) ferma
+il processo, rimuove l'attività pianificata e cancella i file installati.</p>
+<h2 id="perche-unattivita-pianificata-e-non-un-vero-servizio-windows">Perché un'attività pianificata e non un vero "servizio Windows"</h2>
+<p>Un vero servizio Windows richiede che l'eseguibile parli il protocollo SCM (Service
+Control Manager) di Windows — il nostro non lo fa, essendo un normale processo Node
+impacchettato con <code>pkg</code>. La via più comune per aggirarlo è un wrapper di terze parti
+(es. NSSM), ma imbarcare un binario non firmato di terze parti in un installer
+commerciale è un compromesso di fiducia/supply-chain che non ho voluto prendere senza
+un confronto esplicito con chi vende il prodotto. L'attività pianificata con
+<code>/RU SYSTEM /SC ONSTART</code> ottiene lo stesso risultato pratico (avvio automatico prima
+del login, nessuna finestra, riavvio dopo crash) senza dipendenze esterne.</p>
+<h2 id="stato-del-collaudo-onesto">Stato del collaudo (onesto)</h2>
+<ul>
+<li><strong>Compilazione</strong>: verificata — Inno Setup compila senza errori includendo tutti i
+  file attesi (se un sorgente mancasse, la compilazione fallirebbe). Durante lo
+  sviluppo dello script sono stati trovati e corretti due bug reali di sintassi Pascal
+  (<code>GetTickCount</code> non esiste in Inno Setup Pascal Script; uso scorretto del valore di
+  ritorno di <code>StringChangeEx</code>, che modifica la stringa per riferimento e ritorna un
+  Integer, non una String).</li>
+<li><strong>Esecuzione reale del wizard NON testata</strong>: l'installazione vera (elevazione UAC,
+  scrittura in Program Files, generazione <code>.env</code>, registrazione dell'attività
+  pianificata, disinstallazione) richiede di modificare il sistema della macchina di
+  sviluppo (installare in Program Files, creare un task SYSTEM) — è stato deciso di
+  <strong>non farlo automaticamente</strong> senza conferma esplicita, e al momento della stesura di
+  questo documento quella conferma non è ancora arrivata. <strong>Prima di consegnare
+  l'installer a un cliente vero, va fatto almeno un giro di test completo su una
+  macchina Windows pulita</strong> (o una VM), verificando in particolare: il wizard scrive un
+  <code>.env</code> valido, <code>Nugis.exe</code> parte davvero dall'attività pianificata dopo un riavvio del
+  PC, e la disinstallazione non lascia residui.</li>
+</ul>
+<h2 id="cosa-manca-ancora-per-un-prodotto-commercialmente-pulito">Cosa manca ancora per un prodotto commercialmente "pulito"</h2>
+<ul>
+<li><strong>Firma digitale (code-signing)</strong>: né <code>Nugis.exe</code> né <code>NugisSetup.exe</code> sono firmati.
+  Windows SmartScreen mostrerà un avviso "Editore sconosciuto" al cliente. Serve un
+  certificato Authenticode (tipicamente 70-300€/anno) per rimuoverlo.</li>
+<li><strong>Icona personalizzata</strong> per l'installer e l'eseguibile (oggi usano quella di default
+  di Inno Setup/pkg).</li>
+<li>Vedi anche <code>docs/license-server.md</code>, sezione finale, per cosa manca lato gestione
+  licenze (nessuna UI, solo API dirette).</li>
+</ul></div><div style="page-break-after: always;"></div>
+<div class="doc-section"><h1 id="distribuzione-come-eseguibile-windows-exe">Distribuzione come eseguibile Windows (.exe)</h1>
+<h2 id="come-funziona">Come funziona</h2>
+<p><code>npm run build:exe -w apps/server</code> produce una cartella <code>apps/server/dist-exe/</code> con:</p>
+<pre><code>dist-exe/
+  Nugis.exe                    &lt;- avvialo, fa partire API + pannello web insieme
+  public/                      &lt;- build statica del pannello (servita dallo stesso .exe)
+  generated/prisma-client/     &lt;- client Prisma + motore nativo
+  prisma/migrations/           &lt;- applicate automaticamente all'avvio
+  .env.example                 &lt;- copia in .env e compila prima del primo avvio
+</code></pre>
+<p><strong>Non è un singolo file autosufficiente al 100%</strong> — Prisma richiede un motore nativo
+(query engine, un file binario) che <code>pkg</code> non può fondere dentro l'eseguibile. È normale
+per applicazioni Node.js pacchettizzate: si distribuisce una cartella, non un unico file.
+Il pannello web invece è servito direttamente dallo stesso processo (niente nginx/secondo
+eseguibile separato, a differenza della versione Docker).</p>
+<h2 id="perche-non-e-drm-vero-va-detto-chiaramente-al-clientesocio-non-solo-letto-qui">Perché non è DRM vero (va detto chiaramente al cliente/socio, non solo letto qui)</h2>
+<p>Il codice viene offuscato (<code>javascript-obfuscator</code>) prima di essere impacchettato con
+<code>pkg</code>: non è più testo leggibile in chiaro come il progetto sorgente, e non è estraibile
+con un semplice editor di testo. Ma:
+- Esistono strumenti pubblici per "spacchettare" i binari <code>pkg</code> e risalire al codice
+  offuscato
+- Il codice offuscato, anche se difficile da leggere, resta deoffuscabile con impegno
+  e strumenti dedicati</p>
+<p><strong>La protezione reale resta il contratto di licenza commerciale</strong>, non questo
+meccanismo tecnico. Il controllo licenza (<code>apps/license-server</code>) serve a far
+scadere/revocare un cliente che smette di pagare tramite un server centrale che <em>voi</em>
+controllate — non a rendere il software "inviolabile".</p>
+<h2 id="requisiti-per-fare-la-build">Requisiti per fare la build</h2>
+<ul>
+<li>Windows con Node.js 20+ (la build va fatta su Windows per un output <code>win-x64</code>)</li>
+<li>Connessione internet la prima volta (pkg scarica un binario Node precompilato,
+  poi lo mette in cache locale — build successive sono più veloci)</li>
+<li><strong>Nessun compilatore C++/Visual Studio necessario SE il binario precompilato è
+  disponibile</strong> per la combinazione versione Node + piattaforma scelta. Se pkg non lo
+  trova nella sua cache remota, prova a compilare Node da sorgente — richiesto Visual
+  Studio Build Tools con i workload C++, un processo lungo (30+ minuti) e pesante.
+  Se capita, conviene cambiare la versione target Node (es. <code>node20</code> invece di
+  <code>node18</code>) prima di installare un intero toolchain di compilazione.</li>
+</ul>
+<h2 id="build-piu-veloci-in-fase-di-test">Build più veloci in fase di test</h2>
+<pre><code class="language-bash">SKIP_OBFUSCATE=1 npm run build:exe -w apps/server
+</code></pre>
+<p>Salta l'offuscamento (che rallenta la build e non serve mentre stai ancora testando che
+tutto funzioni) — usalo solo per le build che consegni davvero al cliente.</p>
+<h2 id="prima-del-primo-avvio-sulla-macchina-del-cliente">Prima del primo avvio sulla macchina del cliente</h2>
+<p>Se distribuisci solo la cartella <code>dist-exe/</code> senza installer (vedi <code>docs/installer.md</code>
+per il caso normale, con installer):</p>
+<ol>
+<li>Copia <code>.env.example</code> in <code>.env</code> dentro <code>dist-exe/</code></li>
+<li>Compila almeno: <code>ADMIN_JWT_SECRET</code>, <code>ADMIN_DEFAULT_EMAIL</code>, <code>ADMIN_DEFAULT_PASSWORD</code>,
+   <code>ENCRYPTION_KEY</code> — occhio a non lasciare righe duplicate della stessa chiave nel
+   file: <code>dotenv</code> usa la <strong>prima</strong> occorrenza, quindi se <code>.env.example</code> ha già un
+   placeholder per una chiave e ne aggiungi un'altra riga sotto con <code>&gt;&gt;</code>, vince quella
+   sbagliata in cima. Meglio rigenerare il file da zero.</li>
+<li><code>DATABASE_URL</code> deve essere un <strong>path assoluto</strong> (es.
+   <code>file:C:/Nugis/nugis.db</code>), non relativo — dentro lo snapshot di <code>pkg</code> un path
+   relativo non si risolve in modo affidabile.</li>
+<li>Se è un'installazione venduta con licenza: <code>LICENSE_SERVER_URL</code> e <code>LICENSE_KEY</code>
+   (vedi <code>docs/license-server.md</code>)</li>
+<li>Avvia <code>Nugis.exe</code></li>
+</ol>
+<h2 id="cosa-fa-da-solo-allavvio-testato-dal-vivo-non-solo-scritto">Cosa fa da solo all'avvio (testato dal vivo, non solo scritto)</h2>
+<p>Nessun passaggio manuale di <code>prisma migrate</code> o di seed: <code>Nugis.exe</code>, alla partenza:</p>
+<ol>
+<li><strong>Applica le migrazioni Prisma pendenti</strong> (<code>services/autoMigrate.ts</code>) leggendo
+   direttamente i file <code>migration.sql</code>, perché dentro l'exe non esiste una CLI Prisma
+   installata. Verificato con tutte e 13 le migrazioni presenti al 29/08/2026.</li>
+<li><strong>Crea il primo admin</strong> (<code>services/bootstrapAdmin.ts</code>) da <code>ADMIN_DEFAULT_EMAIL</code>/
+   <code>ADMIN_DEFAULT_PASSWORD</code> — solo se non esiste già nessun admin nel DB (così non
+   resuscita credenziali di default dopo che il cliente ne ha create di sue).</li>
+<li>Controlla la licenza, poi fa partire i bot Telegram delle creator configurate.</li>
+</ol>
+<p>Test end-to-end confermato: <code>/health</code> → tutte le migrazioni applicate → admin creato →
+login → pannello web servito dallo stesso processo su <code>http://localhost:4000</code>.</p></div><div style="page-break-after: always;"></div>
+<div class="doc-section"><h1 id="server-di-licenze-per-lufficio-che-vende-nugis">Server di Licenze (per l'ufficio che vende Nugis)</h1>
+<p>Strumento interno, separato dal prodotto Nugis vero e proprio: lo gestisce solo chi
+vende le licenze (l'ufficio), i clienti finali non ci accedono mai direttamente.</p>
+<p><strong>Testato dal vivo</strong> (creazione → validazione → revoca → eliminazione, ciclo completo
+con richieste HTTP reali), non solo scritto e compilato.</p>
+<h2 id="come-funziona-in-breve">Come funziona, in breve</h2>
+<pre><code>[Ufficio] server di licenze (apps/license-server) — genera chiavi, le gestisce
+    ↑ POST /validate (ogni ~6h, automatico)
+[Cliente] installazione Nugis (apps/server) — verifica di essere ancora valida
+</code></pre>
+<p>Se un'installazione Nugis <strong>non</strong> ha <code>LICENSE_SERVER_URL</code>/<code>LICENSE_KEY</code> configurati nel
+suo <code>.env</code>, il controllo è semplicemente disattivato — nessuna restrizione. Il controllo
+scatta SOLO se configurato: è pensato per le installazioni vendute, non per l'uso interno.</p>
+<h2 id="setup-del-server-di-licenze-una-volta-sola-lo-ospita-lufficio">Setup del server di licenze (una volta sola, lo ospita l'ufficio)</h2>
+<pre><code class="language-bash">cd apps/license-server
+cp .env.example .env
+# apri .env e imposta LICENSE_ADMIN_SECRET (stringa lunga e casuale, es.
+# node -e &quot;console.log(require('crypto').randomBytes(24).toString('hex'))&quot;)
+
+npm run prisma:generate -w apps/license-server
+npx prisma migrate deploy --schema apps/license-server/prisma/schema.prisma
+npm run dev:license-server
+</code></pre>
+<blockquote>
+<p><strong>Bug corretto (29/08/2026)</strong>: <code>DATABASE_URL</code> in <code>.env.example</code> puntava a
+<code>file:./prisma/licenses.db</code>. Prisma risolve i path relativi di <code>DATABASE_URL</code>
+rispetto alla cartella dove sta <code>schema.prisma</code> (cioè <code>prisma/</code>), non rispetto alla
+working directory da cui lanci il comando — quel valore creava quindi il file in
+<code>prisma/prisma/licenses.db</code> invece che in <code>prisma/licenses.db</code>. Il valore corretto,
+già in <code>.env.example</code>, è <code>file:./licenses.db</code>.</p>
+</blockquote>
+<p>Va tenuto <strong>sempre acceso e raggiungibile</strong> dalle installazioni dei clienti (un server
+con IP fisso o un dominio, non un laptop che si spegne la sera) — se è irraggiungibile
+per più di 5 giorni consecutivi, le installazioni clienti smettono di funzionare (grace
+period, vedi <code>services/licensing.ts</code> in apps/server).</p>
+<h2 id="creare-una-licenza-per-un-nuovo-cliente">Creare una licenza per un nuovo cliente</h2>
+<pre><code class="language-bash">curl -X POST http://IP_UFFICIO:5000/admin/licenses \
+  -H &quot;Content-Type: application/json&quot; \
+  -H &quot;x-admin-secret: IL_TUO_LICENSE_ADMIN_SECRET&quot; \
+  -d '{
+    &quot;customerName&quot;: &quot;Nome Cliente SRL&quot;,
+    &quot;expiresAt&quot;: &quot;2027-01-01T00:00:00Z&quot;,
+    &quot;maxCreators&quot;: 5,
+    &quot;notes&quot;: &quot;Piano annuale, rinnovo gennaio&quot;
+  }'
+</code></pre>
+<p>La risposta contiene <code>"key": "NUGIS-XXXX-XXXX-XXXX-XXXX"</code> — <strong>copiala subito</strong>, non viene
+più mostrata per intero dopo (le liste successive la mostrano mascherata). Comunicala al
+cliente insieme a <code>LICENSE_SERVER_URL</code> (l'indirizzo del vostro server) da mettere nel
+<code>.env</code> della sua installazione Nugis.</p>
+<h2 id="gestione-licenze-esistenti">Gestione licenze esistenti</h2>
+<pre><code class="language-bash"># Elenco (chiavi mascherate)
+curl http://IP_UFFICIO:5000/admin/licenses -H &quot;x-admin-secret: ...&quot;
+
+# Estendere la scadenza / cambiare il limite creator
+curl -X PATCH http://IP_UFFICIO:5000/admin/licenses/ID \
+  -H &quot;x-admin-secret: ...&quot; -H &quot;Content-Type: application/json&quot; \
+  -d '{&quot;expiresAt&quot;: &quot;2028-01-01T00:00:00Z&quot;, &quot;maxCreators&quot;: 10}'
+
+# Revocare (il cliente smette di funzionare al prossimo check, entro 6h)
+curl -X PATCH http://IP_UFFICIO:5000/admin/licenses/ID \
+  -H &quot;x-admin-secret: ...&quot; -H &quot;Content-Type: application/json&quot; \
+  -d '{&quot;status&quot;: &quot;revoked&quot;}'
+</code></pre>
+<p>Ogni licenza tiene traccia di <code>lastCheckAt</code>/<code>lastCheckInstanceId</code>: utile per vedere se e
+quando un cliente ha effettivamente controllato l'ultima volta.</p>
+<h2 id="lato-installazione-cliente-nugis">Lato installazione cliente (Nugis)</h2>
+<p>Nel <code>.env</code> di <code>apps/server</code> del cliente:</p>
+<pre><code>LICENSE_SERVER_URL=&quot;http://IP_UFFICIO:5000&quot;
+LICENSE_KEY=&quot;NUGIS-XXXX-XXXX-XXXX-XXXX&quot;
+</code></pre>
+<p>Da quel momento: verifica al boot + ogni 6 ore. Se non valida, i bot Telegram non
+partono e il pannello mostra un banner rosso in cima a ogni pagina — i dati del cliente
+NON vengono toccati/cancellati, solo il servizio si ferma.</p>
+<h2 id="limiti-onesti-di-questo-sistema">Limiti onesti di questo sistema</h2>
+<ul>
+<li><strong>Non è DRM vero</strong>: chi ha accesso al codice sorgente di Nugis può, tecnicamente,
+  rimuovere il controllo licenza. La protezione reale è il contratto commerciale, non
+  la tecnologia — vedi la discussione su come "chiudere in un applicativo" per il
+  quadro completo.</li>
+<li><strong>Nessuna interfaccia grafica</strong> per gestire le licenze: solo <code>curl</code>/API dirette. Se
+  servono più licenze da gestire regolarmente, vale la pena costruire una piccola UI
+  sopra queste stesse route (sono già pronte).</li>
+<li><strong>Un solo segreto condiviso</strong> per l'accesso admin (<code>LICENSE_ADMIN_SECRET</code>), non un
+  vero sistema di utenti multipli — adeguato per un piccolo ufficio, non per un team
+  grande con necessità di permessi differenziati.</li>
+</ul></div><div style="page-break-after: always;"></div>
+<div class="doc-section"><h1 id="collegare-il-bot-telegram-di-ogni-creator">Collegare il bot Telegram di ogni creator</h1>
+<p>Ogni creator ha il <strong>proprio</strong> bot Telegram — non è una configurazione unica per tutta
+l'installazione Nugis, va ripetuta per ciascuna.</p>
+<h2 id="flusso-normale-per-ogni-nuova-creator">Flusso normale (per ogni nuova creator)</h2>
+<ol>
+<li>Crea la creator nel pannello web di Nugis</li>
+<li>Su Telegram, apri una chat con <strong>@BotFather</strong>, crea un nuovo bot (<code>/newbot</code>), copia
+   il <strong>token</strong> che ti dà (formato <code>123456789:ABC-DEF1234...</code>)</li>
+<li>Incolla quel token nella scheda della creator, nel pannello web (campo token bot) —
+   <strong>non</strong> va messo nel file <code>.env</code></li>
+<li>Nugis lo salva <strong>cifrato</strong> nel database (<code>encryptCredential</code>, vedi
+   <code>apps/server/src/routes/creators.ts</code>) e fa partire il bot di quella creator in
+   automatico</li>
+</ol>
+<p>La riga <code>TELEGRAM_BOT_TOKEN</code> dentro <code>.env</code> è solo un <strong>fallback opzionale</strong> per un
+eventuale bot "gateway" unico condiviso — il percorso normale/atteso è un token per
+creator, inserito dal pannello.</p>
+<h2 id="cosa-e-diverso-le-cartelle-chat-reali-mtproto">Cosa è diverso: le "cartelle chat reali" (MTProto)</h2>
+<p>Il brief chiede anche di poter aggiungere automaticamente i fan a una vera cartella
+chat di Telegram (funzione avanzata, opzionale). Questa parte:</p>
+<ul>
+<li><strong>Non usa il token del bot</strong>, ma un vero <strong>account Telegram personale</strong>
+  dell'operatore (numero di telefono + login one-time con SMS + eventuale password 2FA)</li>
+<li>Richiede <code>TELEGRAM_API_ID</code>/<code>TELEGRAM_API_HASH</code> ottenuti gratis su
+  https://my.telegram.org/apps, configurati <strong>una sola volta</strong> nel <code>.env</code>
+  dell'installazione (condivisi, non per-creator)</li>
+<li>Il login vero e proprio (numero + codice SMS) si fa dal pannello, sezione "Fan &amp;
+  Cartelle → Cartelle Telegram Reali" — una tantum, non automatizzabile (il codice
+  arriva sul telefono dell'operatore)</li>
+</ul>
+<p><strong>Stato di collaudo</strong>: il codice è scritto e segue la documentazione ufficiale della
+libreria (<code>telegram</code>/GramJS), ma <strong>non è mai stato testato con un account Telegram
+reale</strong> — richiede un vero numero di telefono e un vero SMS ricevuto, cosa che non è
+simulabile in un ambiente di sviluppo/test automatico. È la parte del progetto con il
+collaudo più debole: va provata dal vivo con un account reale (anche uno secondario)
+prima di fare affidamento su di essa in produzione. Vedi anche
+<code>docs/telegram-automation-limits.md</code> per i limiti di invio/spam che si applicano
+comunque a tutto ciò che manda messaggi via Telegram (bot o account MTProto).</p></div><div style="page-break-after: always;"></div>
+</body></html>

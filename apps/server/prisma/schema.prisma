@@ -1,0 +1,339 @@
+// BUG FIX: senza "output" esplicito, il client generato finisce nel node_modules
+// RADICE del monorepo (hoisting npm workspaces) — condiviso con apps/license-server,
+// che ha uno schema DIVERSO. Generare l'uno sovrascriveva silenziosamente il client
+// dell'altro. Output dentro la cartella dell'app stessa = nessuna collisione
+// (lib/prisma.ts importa da questo path invece che dal pacchetto "@prisma/client").
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma-client"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// Un "creator" = un profilo/persona gestito tramite un bot Telegram dedicato.
+model Creator {
+  id            String   @id @default(cuid())
+  name          String
+  telegramBotToken String? // opzionale se si usa un bot per-creator; può restare vuoto se si usa gateway multi-tenant
+  personaPrompt String   @default("") // descrizione persona/tono di voce, impostabile da pannello admin
+  llmProvider   String   @default("ollama") // "ollama" (default: locale, nessun ToS di terzi) | "deepseek" | "anthropic" | "openai"
+  llmApiKey     String?  // API Key inserita direttamente nel pannello admin (es. sk-e70b7...)
+  llmModel      String?  @default("llama3.2")
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Attestazione di responsabilità legale: il bot NON parte (vedi bot/index.ts) finché
+  // un owner non conferma esplicitamente di aver letto gli avvisi su età dei fan, ToS
+  // del provider LLM scelto (Anthropic/OpenAI/DeepSeek vietano contenuto sessualmente
+  // esplicito nei loro termini — vedi UI) e conformità GDPR, assumendosene la
+  // responsabilità. Non è una funzione di sicurezza tecnica: è un record verificabile
+  // di chi ha attivato cosa e quando, non un controllo automatico dei contenuti.
+  complianceAcknowledgedAt DateTime?
+  complianceAcknowledgedByAdminUserId String?
+
+  // Giorni di attesa prima che un incasso confermato diventi prelevabile (visto nello
+  // screenshot reale del prodotto di riferimento: "Pending 21d"). Configurabile per
+  // creator invece che fisso, nel caso cambi da contratto a contratto.
+  withdrawalHoldDays Int @default(21)
+
+  extraInstructions ExtraInstruction[]
+  contentItems      ContentItem[]
+  pricingItems      PricingItem[]
+  fans              Fan[]
+  followUpRule      FollowUpRule?
+  transactions      Transaction[]
+  chatterAccess     AdminCreatorAccess[]
+  shortcuts         CreatorShortcut[]
+}
+
+// Comandi rapidi che il LLM può inserire nella propria risposta (es. "/listino"): il
+// sistema li riconosce, li sostituisce col testo completo salvato qui, e lo manda come
+// messaggio SEPARATO senza il ritardo di digitazione simulato (è testo precompilato,
+// non generato lì per lì — vedi screenshot reale del prodotto di riferimento).
+// Vantaggio: il LLM non deve "ricordarsi" e riscrivere ogni volta un listino lungo e
+// preciso (rischio di errori/incoerenze), richiama solo il comando.
+model CreatorShortcut {
+  id        String   @id @default(cuid())
+  creatorId String
+  creator   Creator  @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+  command   String   // es. "/listino" (con o senza slash iniziale, normalizzato nel codice)
+  content   String   // testo completo inviato al posto del comando
+  createdAt DateTime @default(now())
+
+  @@unique([creatorId, command])
+}
+
+// Istruzioni extra per l'AI. "isStandard = true" = regole base sempre attive
+// (es. "manda almeno 5/6 messaggi prima di contenuti a pagamento", "non mandare il listino completo").
+// "isStandard = false" = istruzioni custom scritte dall'admin/creator per il proprio personaggio.
+// NB: il contenuto testuale libero (incluso eventuale materiale esplicito) lo scrive
+// il gestore del profilo dal pannello admin: qui non viene precompilato da noi.
+model ExtraInstruction {
+  id          String   @id @default(cuid())
+  creatorId   String
+  creator     Creator  @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+  title       String
+  content     String
+  isStandard  Boolean  @default(false)
+  isEnabled   Boolean  @default(true)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// Contenuto singolo vendibile (foto/video), con ID esplicito richiamabile in chat.
+model ContentItem {
+  id          String   @id @default(cuid())
+  creatorId   String
+  creator     Creator  @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+  externalId  String   // es. "21670210", l'ID "storico" richiamato a mano nelle chat
+  folder      String   @default("generico") // cartella/categoria, es "Sexchat #1", "video personalizzati", "piedi"
+  title       String
+  description String   @default("")
+  priceCents  Int      @default(0)
+  currency    String   @default("EUR")
+  mediaUrl    String?  // path/URL del file (locale o storage esterno)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  transactions Transaction[]
+
+  @@unique([creatorId, externalId])
+}
+
+// Listino prezzi generico (videochiamate, video personalizzati, ecc.)
+model PricingItem {
+  id          String   @id @default(cuid())
+  creatorId   String
+  creator     Creator  @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+  category    String   // es. "videocall", "custom_video"
+  label       String   // es. "5 minuti soft, senza toy"
+  priceCents  Int
+  currency    String   @default("EUR")
+  sortOrder   Int      @default(0)
+}
+
+model Fan {
+  id             String   @id @default(cuid())
+  creatorId      String
+  creator        Creator  @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+  telegramChatId String
+  displayName    String?
+  folderTag      String?  // tag interno di "cartella" fan, impostato MANUALMENTE dall'admin (vedi README: limiti Bot API sulle chat folder reali)
+  sexchatPhase   String?  // fase automatica della sexchatStateMachine (phase1_flirting|phase2_teaser_preview|phase3_locked_offer|phase4_completed)
+                          // BUG FIX: prima veniva scritta nello stesso campo folderTag, sovrascrivendo il tag cartella scelto a mano dall'admin
+  maxMessagesUsed Int     @default(0) // contatore usato per il bug "max message" (slide 2)
+  lastMessageAt  DateTime?
+  lastContactedByFollowUp DateTime?
+  followUpOptOut Boolean  @default(false) // il fan ha chiesto di non essere ricontattato automaticamente (ricerca limiti Telegram)
+  heatScore      Float    @default(0) // media mobile dell'interesse del fan (services/sexchatHeat.ts), persiste oltre gli ultimi 6 messaggi
+  lastQuickReengagementAt DateTime? // ultimo nudge "rapido" (5-10 min), separato dal follow-up giornaliero
+  createdAt      DateTime @default(now())
+
+  messages       Message[]
+  paymentClaims  ExternalPaymentClaim[]
+  transactions   Transaction[]
+
+  @@unique([creatorId, telegramChatId])
+}
+
+// Traccia le dichiarazioni di pagamento esterno fatte da un fan in chat, per
+// garantire che "controllo e ti rispondo" sia una promessa vera e non un modo
+// per far perdere tempo/silenziare: ogni dichiarazione genera una riga qui,
+// visibile e risolvibile dal pannello admin (confermata/non trovata), e la
+// risoluzione va sempre comunicata al fan con l'esito reale.
+model ExternalPaymentClaim {
+  id           String   @id @default(cuid())
+  fanId        String
+  fan          Fan      @relation(fields: [fanId], references: [id], onDelete: Cascade)
+  fanMessage   String   // il messaggio originale del fan che dichiara il pagamento
+  status       String   @default("pending") // pending | confirmed | not_found
+  resolutionNote String?
+  createdAt    DateTime @default(now())
+  resolvedAt   DateTime?
+}
+
+model Message {
+  id         String   @id @default(cuid())
+  fanId      String
+  fan        Fan      @relation(fields: [fanId], references: [id], onDelete: Cascade)
+  direction  String   // "in" | "out"
+  text       String
+  status     String   @default("sent") // sent | failed | queued | dead_letter
+  attempts   Int      @default(0)
+  createdAt  DateTime @default(now())
+}
+
+// Coda di invio persistente: risolve il bug "il bot lascia indietro chat".
+// Ogni messaggio in uscita passa da qui; un job lo processa rispettando i rate limit
+// ufficiali della Bot API di Telegram e riprova con backoff in caso di errore.
+model OutboundQueueItem {
+  id          String   @id @default(cuid())
+  fanId       String
+  text        String
+  mediaUrl    String?
+  status      String   @default("pending") // pending | processing | sent | failed | dead_letter
+  attempts    Int      @default(0)
+  lastError   String?
+  scheduledAt DateTime @default(now())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// Regola di follow-up giornaliero (solo chat del giorno stesso, mai del giorno prima,
+// come richiesto nel brief per restare nei limiti "ragionevoli" della piattaforma).
+//
+// maxPerDay e templateVariant2/3: applicano i risultati della ricerca sui limiti di
+// automazione Telegram (brief pagina 2) — Telegram non pubblica soglie ufficiali di
+// spam/ban, ma i report utente ripetuti (5-7 in 24h secondo dati di community) possono
+// far limitare/bannare l'account; testo identico mandato a molti utenti nella stessa
+// finestra temporale è uno dei pattern che fa scattare i filtri anti-spam automatici.
+// Vedi docs/telegram-automation-limits.md per le fonti e il ragionamento completo.
+model FollowUpRule {
+  id          String   @id @default(cuid())
+  creatorId   String   @unique
+  creator     Creator  @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+  isEnabled   Boolean  @default(false)
+  template    String   @default("Ciao! Volevo solo sapere se hai visto il mio ultimo messaggio 😊")
+  templateVariant2 String? // variante testuale alternativa, alternata a rotazione per non mandare testo identico a tutti
+  templateVariant3 String?
+  minHoursSinceLastMessage Int @default(3)
+  maxPerDay   Int      @default(40) // tetto giornaliero prudenziale per bot/creator, vedi ricerca
+
+  // Nudge "rapido" separato dal follow-up giornaliero sopra: visto nello screenshot
+  // reale del prodotto di riferimento ("Runs every 5 minutes on chat with last
+  // assistant msg between 5 and 10 minutes old"). A differenza del follow-up
+  // giornaliero (una volta al giorno, su chat rimaste ferme per ore), questo tocca il
+  // fan pochi minuti dopo che il BOT ha scritto per ultimo e non ha ricevuto risposta —
+  // un "ci sei ancora?" quasi in tempo reale, non un ricontatto a distanza di ore.
+  quickReengagementEnabled     Boolean @default(false)
+  quickReengagementTemplate    String  @default("Ci sei ancora? 😊")
+  quickReengagementMinMinutes  Int     @default(5)
+  quickReengagementMaxMinutes  Int     @default(10)
+}
+
+// Utenti del pannello admin. Due ruoli:
+// - "owner": accesso completo a tutte le creator, unico ruolo che può creare/eliminare
+//   creator e gestire altri utenti admin (invariato rispetto al comportamento originale
+//   a singolo admin — il primo utente da seed è sempre "owner").
+// - "chatter": vede/gestisce SOLO le creator esplicitamente assegnate (AdminCreatorAccess),
+//   pensato per un'agenzia con più operatori che gestiscono creator diverse per clienti
+//   diversi, senza vedersi a vicenda i dati.
+model AdminUser {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  role         String   @default("owner") // "owner" | "chatter"
+  createdAt    DateTime @default(now())
+
+  creatorAccess AdminCreatorAccess[]
+}
+
+// Assegnazione creator -> chatter (many-to-many). Irrilevante per gli "owner" (vedono
+// sempre tutto), usata solo per filtrare l'accesso dei "chatter".
+model AdminCreatorAccess {
+  id          String    @id @default(cuid())
+  adminUserId String
+  adminUser   AdminUser @relation(fields: [adminUserId], references: [id], onDelete: Cascade)
+  creatorId   String
+  creator     Creator   @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+  createdAt   DateTime  @default(now())
+
+  @@unique([adminUserId, creatorId])
+}
+
+// Token JWT revocati (logout). Persistito su DB invece che in un Set in-memoria:
+// così sopravvive a un riavvio del server e funziona anche con più istanze/repliche.
+// Pulizia: le righe più vecchie di 12h (durata massima del JWT) sono ormai scadute
+// comunque, quindi possono essere ripulite periodicamente (vedi jobs/dbBackup.ts o un
+// cron dedicato, se necessario).
+model RevokedToken {
+  token      String   @id
+  revokedAt  DateTime @default(now())
+}
+
+// Rate limiting/lockout dei tentativi di login falliti, persistito su DB invece che in
+// una Map in-memoria: sopravvive a un riavvio e funziona con più istanze del server.
+model LoginAttempt {
+  ip            String   @id
+  count         Int      @default(0)
+  lockoutUntil  DateTime?
+  updatedAt     DateTime @updatedAt
+}
+
+// Sessione utente MTProto (GramJS) per la gestione REALE delle cartelle Telegram
+// (Api.messages.UpdateDialogFilter). È la sessione dell'account Telegram personale
+// dell'operatore/agenzia (non quella del bot), autenticata una tantum via login con
+// numero di telefono + codice SMS (+ eventuale password 2FA) dal pannello admin.
+// id è sempre "owner": un solo account Telegram collegato per l'intera installazione.
+model TelegramUserSession {
+  id            String   @id @default("owner")
+  phoneNumber   String
+  sessionString String   // cifrata at-rest con lo stesso schema AES-256-GCM di services/crypto.ts
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+// Incasso REALE registrato (non una stima): creata quando l'admin conferma un
+// pagamento esterno con l'importo effettivo, o marca manualmente come venduto un
+// ContentItem/PricingItem. Il bot non può rilevare da solo un pagamento reale (i fan
+// pagano fuori piattaforma via Tribute/Stars/bonifico), quindi la conferma resta un
+// passaggio umano — ma da qui in poi il dato in dashboard è reale, non più una stima
+// fissa (vedi routes/dashboard.ts).
+model Transaction {
+  id          String   @id @default(cuid())
+  creatorId   String
+  creator     Creator  @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+  fanId       String?
+  fan         Fan?     @relation(fields: [fanId], references: [id], onDelete: SetNull)
+  contentItemId String? // valorizzato solo per source="content_item", per calcolare sblocchi/incasso per singolo oggetto
+  contentItem ContentItem? @relation(fields: [contentItemId], references: [id], onDelete: SetNull)
+  source      String   // "payment_claim" | "content_item" | "pricing_item" | "manual"
+  description String
+  amountCents Int
+  currency    String   @default("EUR")
+  // Fase sexchat e heat score del fan AL MOMENTO della vendita (snapshot, non un dato
+  // ricalcolato dopo): non permette un vero A/B test (servirebbe traffico reale con
+  // gruppi di controllo, che non ho), ma rende MISURABILE in futuro se le vendite si
+  // concentrano in una fase/heat particolare, invece di continuare a essere un'ipotesi
+  // non verificabile. Vedi anche sexchatStateMachine.ts.
+  fanSexchatPhaseAtSale String?
+  fanHeatScoreAtSale    Float?
+  createdAt   DateTime @default(now())
+}
+
+// Regole Standard Globali del Sistema (dinamiche, gestite dal pannello modular settings)
+model GlobalRule {
+  id             String   @id @default(cuid())
+  title          String
+  content        String
+  ruleType       String   @default("text") // "number" | "select" | "toggle" | "text"
+  paramValue     String   @default("") // valore numerico o selezionato (es. "5", "true", "24-48")
+  targetAudience String   @default("all") // "all" | "new_users" | "active_chatters" | "vip_users"
+  unitLabel      String   @default("") // etichetta unita di misura (es. "messaggi", "ore", "€")
+  isEnabled      Boolean  @default(true)
+  sortOrder      Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+// Stato cache della licenza (phone-home verso apps/license-server, gestito dall'ufficio
+// che vende Nugis). Riga singola ("singleton"). Se LICENSE_SERVER_URL/LICENSE_KEY non
+// sono configurati nel .env, il controllo licenza è semplicemente disattivato (uso
+// interno/di sviluppo, non un'installazione venduta) — vedi services/licensing.ts.
+model LicenseState {
+  id                 String    @id @default("singleton")
+  instanceId         String // identificativo univoco di QUESTA installazione, generato al primo avvio
+  cachedStatus       String    @default("unchecked") // "unchecked" | "valid" | "invalid"
+  cachedExpiresAt    DateTime?
+  cachedMaxCreators  Int?
+  cachedCustomerName String?
+  lastCheckAt        DateTime?
+  lastValidAt        DateTime? // ultima volta che il check è risultato "valid" — usato per la grace period offline
+  lastError          String?
+}
+

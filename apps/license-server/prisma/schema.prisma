@@ -1,0 +1,40 @@
+// Output isolato dentro l'app (non nel node_modules radice del monorepo, condiviso
+// con apps/server che ha uno schema diverso) — vedi commento gemello in
+// apps/server/prisma/schema.prisma.
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma-client"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// Una licenza Nugis venduta a un cliente. Server centrale gestito dall'ufficio
+// (venditore): ogni installazione Nugis presso un cliente fa "phone-home" qui per
+// verificare di essere ancora valida.
+model License {
+  id          String   @id @default(cuid())
+  key         String   @unique // es. "NUGIS-XXXX-XXXX-XXXX-XXXX", generata alla creazione
+  customerName String
+  status      String   @default("active") // "active" | "revoked"
+  expiresAt   DateTime
+  maxCreators Int      @default(5) // quante creator può attivare questa installazione
+  notes       String   @default("")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Ultimo check-in ricevuto dall'installazione cliente (visibilità per l'ufficio:
+  // "questo cliente ha controllato l'ultima volta quando?").
+  lastCheckAt         DateTime?
+  lastCheckInstanceId String?
+  lastCheckIp         String?
+}
+
+// NB: niente tabella utenti/login qui di proposito — è uno strumento interno per
+// l'ufficio (il venditore), non un pannello multi-utente come Nugis stesso. L'accesso
+// alle route /admin/* è protetto da un singolo segreto condiviso (LICENSE_ADMIN_SECRET
+// nel .env), passato come header "x-admin-secret". Se in futuro più persone
+// dell'ufficio devono gestire le licenze con account separati, si può estendere
+// riusando lo stesso pattern owner/chatter già costruito in Nugis.

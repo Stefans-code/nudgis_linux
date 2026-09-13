@@ -1,0 +1,19 @@
+{
+  "name": "nugis",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/server",
+    "apps/web",
+    "apps/license-server"
+  ],
+  "scripts": {
+    "dev:server": "npm run dev -w apps/server",
+    "dev:web": "npm run dev -w apps/web",
+    "dev:license-server": "npm run dev -w apps/license-server",
+    "build": "npm run build -w apps/server && npm run build -w apps/web && npm run build -w apps/license-server",
+    "prisma:generate": "npm run prisma:generate -w apps/server && npm run prisma:generate -w apps/license-server",
+    "prisma:migrate": "npm run prisma:migrate -w apps/server",
+    "test": "npm run test -w apps/server"
+  }
+}

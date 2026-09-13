@@ -55,6 +55,14 @@ jobs:
           sudo /usr/local/nugis/uninstall.sh --purge
           echo "✅ Disinstallazione completata senza errori"
 
+      - name: Diagnostica in caso di fallimento (log del servizio)
+        if: failure()
+        run: |
+          echo "--- launchctl print ---"
+          sudo launchctl print system/com.nugis.app || true
+          echo "--- /usr/local/nugis/nugis.log ---"
+          sudo cat /usr/local/nugis/nugis.log || true
+
       - name: Test reale (via .pkg) — installer GUI in modalità silenziosa
         run: |
           set -euo pipefail
@@ -67,6 +75,14 @@ jobs:
           curl -fsS http://localhost:4000/health | grep -q '"ok":true'
           echo "✅ .pkg installa e avvia correttamente (credenziali casuali in CREDENZIALI_INIZIALI.txt)"
           sudo /usr/local/nugis/uninstall.sh --purge
+
+      - name: Diagnostica in caso di fallimento (.pkg)
+        if: failure()
+        run: |
+          echo "--- launchctl print ---"
+          sudo launchctl print system/com.nugis.app || true
+          echo "--- /usr/local/nugis/nugis.log ---"
+          sudo cat /usr/local/nugis/nugis.log || true
 
       - name: Carica tarball + .pkg come artifact
         uses: actions/upload-artifact@v4

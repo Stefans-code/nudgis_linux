@@ -68,12 +68,21 @@ run(
 fs.chmodSync(path.join(BUNDLE_DIR, "Nugis"), 0o755);
 run(`lipo -info "${path.join(BUNDLE_DIR, "Nugis")}"`); // stampa gli archs presenti, verifica a vista
 
-// generated/prisma/public sono identici tra le due arch (il client Prisma include già
-// TUTTI i motori nativi, vedi schema.prisma binaryTargets; il pannello web è build
-// statica indipendente dall'arch) — ne basta una copia sola, presa dalla build x64.
-for (const d of ["generated", "prisma", "public"]) {
+// prisma/public sono identici tra le due arch (build statica/migrazioni, indipendenti
+// dall'arch) — ne basta una copia sola, presa dalla build x64.
+for (const d of ["prisma", "public"]) {
   copyDir(path.join(SERVER_ROOT, "dist-exe-macos-x64", d), path.join(BUNDLE_DIR, d));
 }
+// generated/prisma-client NO: build-exe.js filtra i motori nativi per-target (vedi
+// ENGINE_KEEP_PATTERNS), quindi la build x64 porta SOLO il motore darwin-x64 e quella
+// arm64 SOLO il motore darwin-arm64. Un binario universale gira su ENTRAMBE le arch a
+// seconda dell'hardware del cliente, quindi il bundle finale deve contenere ENTRAMBI i
+// motori — prendendone uno solo (bug scoperto in CI: il servizio si installava/caricava
+// ma non rispondeva mai su :4000 su un runner Apple Silicon, perché la fetta arm64 del
+// binario non trovava libquery_engine-darwin-arm64.dylib.node) il processo crasha subito
+// dopo l'avvio, silenziosamente per chi guarda solo "il LaunchDaemon è caricato".
+copyDir(path.join(SERVER_ROOT, "dist-exe-macos-x64", "generated"), path.join(BUNDLE_DIR, "generated"));
+copyDir(path.join(SERVER_ROOT, "dist-exe-macos-arm64", "generated"), path.join(BUNDLE_DIR, "generated"));
 fs.copyFileSync(path.join(SERVER_ROOT, "dist-exe-macos-x64", ".env.example"), path.join(BUNDLE_DIR, ".env.example"));
 copyDir(INSTALLER_SRC, BUNDLE_DIR);
 for (const f of ["install.sh", "uninstall.sh"]) fs.chmodSync(path.join(BUNDLE_DIR, f), 0o755);

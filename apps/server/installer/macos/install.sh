@@ -23,14 +23,28 @@ if [ "$(id -u)" -ne 0 ]; then
   exit 1
 fi
 
-if [ ! -f "$SCRIPT_DIR/Nugis" ]; then
-  echo "Non trovo '$SCRIPT_DIR/Nugis'. Esegui questo script dalla cartella estratta dal tarball." >&2
+# Pacchetto unico Intel+Apple Silicon: contiene ENTRAMBI i binari (Nugis-x64,
+# Nugis-arm64) invece di un fat binary lipo (scartato: pkg+lipo produce un binario che
+# compila ma crasha all'avvio, vedi docs/installer-macos.md) — scegliamo qui quello
+# giusto per l'hardware corrente.
+ARCH="$(uname -m)"
+case "$ARCH" in
+  arm64) BIN_SRC="Nugis-arm64" ;;
+  x86_64) BIN_SRC="Nugis-x64" ;;
+  *)
+    echo "Architettura non riconosciuta: $ARCH (attese: arm64, x86_64)." >&2
+    exit 1
+    ;;
+esac
+
+if [ ! -f "$SCRIPT_DIR/$BIN_SRC" ]; then
+  echo "Non trovo '$SCRIPT_DIR/$BIN_SRC'. Esegui questo script dalla cartella estratta dal tarball." >&2
   exit 1
 fi
 
-echo "==> Copio i file in $NUGIS_DIR"
+echo "==> Copio i file in $NUGIS_DIR (binario: $BIN_SRC per $ARCH)"
 mkdir -p "$NUGIS_DIR"
-cp -a "$SCRIPT_DIR/Nugis" "$NUGIS_DIR/Nugis"
+cp -a "$SCRIPT_DIR/$BIN_SRC" "$NUGIS_DIR/Nugis"
 chmod 755 "$NUGIS_DIR/Nugis"
 for d in generated prisma public; do
   rm -rf "${NUGIS_DIR:?}/$d"

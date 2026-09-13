@@ -1,15 +1,25 @@
-// Builda i binari macOS (x64 + arm64), li unisce in un unico binario universale con
-// `lipo` e produce due deliverable in installer-output-macos/:
+// Builda i binari macOS (x64 + arm64) e li impacchetta in UN SOLO installer universale
+// (stesso file per Intel e Apple Silicon, sceglie da solo il binario giusto
+// all'installazione — vedi installer/macos/install.sh e postinstall):
 //   nugis-macos-universal.tar.gz   <- estrai ed esegui "sudo ./install.sh" (interattivo)
 //   NugisInstaller.pkg             <- doppio clic, password admin iniziale casuale
-//                                     (vedi installer/macos/postinstall e docs/installer-macos.md)
 //
 // Uso: npm run build:installer:macos -w apps/server
 //
-// IMPORTANTE: `lipo`, `pkgbuild` e `codesign` esistono SOLO su macOS. Questo script
-// va eseguito su un Mac (o nel workflow CI .github/workflows/build-macos-installer.yml,
-// runner macos-latest) — su Windows/Linux fallisce subito con un errore chiaro invece
-// di produrre un output silenziosamente incompleto o sbagliato.
+// PERCHÉ NON un vero binario universale con `lipo`: provato e scartato (13/09/2026) —
+// `pkg` aggiunge dopo il Mach-O un payload custom (bootstrap + snapshot V8) con offset
+// che si riferiscono alla POSIZIONE ORIGINALE nel file. `lipo -create` sposta le due
+// fette dentro un fat-file più grande senza riscrivere quegli offset: il risultato
+// compila (lipo non si accorge di nulla) ma CRASHA all'avvio con un
+// "SyntaxError: Invalid or unexpected token" su byte del payload letti al posto
+// sbagliato — scoperto perché la CI lo installa ed esegue per davvero, non solo lo
+// builda. Un solo pacchetto con ENTRAMBI i binari + selezione automatica all'avvio
+// (uname -m) ottiene lo stesso risultato per l'utente finale (un download, funziona
+// su qualunque Mac) in modo affidabile.
+//
+// IMPORTANTE: `pkgbuild`/`codesign` esistono SOLO su macOS. Questo script va eseguito
+// su un Mac (o nel workflow CI .github/workflows/build-macos-installer.yml, runner
+// macos-latest) — su Windows/Linux fallisce subito con un errore chiaro.
 //
 // Firma/notarizzazione: NON fatta qui (serve un Apple Developer ID, a pagamento) — il
 // pacchetto risultante non è firmato. Gatekeeper mostrerà un avviso "sviluppatore non
@@ -22,7 +32,7 @@ const path = require("path");
 
 if (process.platform !== "darwin") {
   console.error(
-    "Questo script richiede macOS (usa lipo/pkgbuild, non disponibili altrove).\n" +
+    "Questo script richiede macOS (usa pkgbuild, non disponibile altrove).\n" +
     "Eseguilo su un Mac, oppure lascia che lo faccia il workflow CI:\n" +
     "  .github/workflows/build-macos-installer.yml (runner macos-latest)."
   );
@@ -59,28 +69,23 @@ run("node scripts/build-exe.js", SERVER_ROOT, { PKG_TARGET: "node22-macos-x64", 
 console.log("================ macOS arm64 ================");
 run("node scripts/build-exe.js", SERVER_ROOT, { PKG_TARGET: "node22-macos-arm64", OUT_DIR: "dist-exe-macos-arm64", BIN_NAME: "Nugis-arm64" });
 
-console.log("================ lipo: binario universale x64+arm64 ================");
+console.log("================ Assemblo il pacchetto unico (entrambi i binari) ================");
 fs.rmSync(BUNDLE_DIR, { recursive: true, force: true });
 fs.mkdirSync(BUNDLE_DIR, { recursive: true });
-run(
-  `lipo -create "${path.join(SERVER_ROOT, "dist-exe-macos-x64", "Nugis-x64")}" "${path.join(SERVER_ROOT, "dist-exe-macos-arm64", "Nugis-arm64")}" -output "${path.join(BUNDLE_DIR, "Nugis")}"`
-);
-fs.chmodSync(path.join(BUNDLE_DIR, "Nugis"), 0o755);
-run(`lipo -info "${path.join(BUNDLE_DIR, "Nugis")}"`); // stampa gli archs presenti, verifica a vista
+fs.copyFileSync(path.join(SERVER_ROOT, "dist-exe-macos-x64", "Nugis-x64"), path.join(BUNDLE_DIR, "Nugis-x64"));
+fs.copyFileSync(path.join(SERVER_ROOT, "dist-exe-macos-arm64", "Nugis-arm64"), path.join(BUNDLE_DIR, "Nugis-arm64"));
+fs.chmodSync(path.join(BUNDLE_DIR, "Nugis-x64"), 0o755);
+fs.chmodSync(path.join(BUNDLE_DIR, "Nugis-arm64"), 0o755);
 
 // prisma/public sono identici tra le due arch (build statica/migrazioni, indipendenti
 // dall'arch) — ne basta una copia sola, presa dalla build x64.
 for (const d of ["prisma", "public"]) {
   copyDir(path.join(SERVER_ROOT, "dist-exe-macos-x64", d), path.join(BUNDLE_DIR, d));
 }
-// generated/prisma-client NO: build-exe.js filtra i motori nativi per-target (vedi
-// ENGINE_KEEP_PATTERNS), quindi la build x64 porta SOLO il motore darwin-x64 e quella
-// arm64 SOLO il motore darwin-arm64. Un binario universale gira su ENTRAMBE le arch a
-// seconda dell'hardware del cliente, quindi il bundle finale deve contenere ENTRAMBI i
-// motori — prendendone uno solo (bug scoperto in CI: il servizio si installava/caricava
-// ma non rispondeva mai su :4000 su un runner Apple Silicon, perché la fetta arm64 del
-// binario non trovava libquery_engine-darwin-arm64.dylib.node) il processo crasha subito
-// dopo l'avvio, silenziosamente per chi guarda solo "il LaunchDaemon è caricato".
+// generated/prisma-client invece va unito da ENTRAMBE le build: build-exe.js filtra i
+// motori nativi per-target, quindi x64 porta solo darwin-x64 e arm64 solo darwin-arm64.
+// install.sh/postinstall lanciano il binario giusto per l'hardware corrente, che a sua
+// volta ha bisogno del SUO motore — servono entrambi nello stesso pacchetto.
 copyDir(path.join(SERVER_ROOT, "dist-exe-macos-x64", "generated"), path.join(BUNDLE_DIR, "generated"));
 copyDir(path.join(SERVER_ROOT, "dist-exe-macos-arm64", "generated"), path.join(BUNDLE_DIR, "generated"));
 fs.copyFileSync(path.join(SERVER_ROOT, "dist-exe-macos-x64", ".env.example"), path.join(BUNDLE_DIR, ".env.example"));
@@ -96,8 +101,10 @@ const pkgRoot = path.join(OUT_DIR, "pkgroot", "usr", "local", "nugis");
 fs.rmSync(path.join(OUT_DIR, "pkgroot"), { recursive: true, force: true });
 fs.mkdirSync(pkgRoot, { recursive: true });
 for (const d of ["generated", "prisma", "public"]) copyDir(path.join(BUNDLE_DIR, d), path.join(pkgRoot, d));
-fs.copyFileSync(path.join(BUNDLE_DIR, "Nugis"), path.join(pkgRoot, "Nugis"));
-fs.chmodSync(path.join(pkgRoot, "Nugis"), 0o755);
+for (const f of ["Nugis-x64", "Nugis-arm64"]) {
+  fs.copyFileSync(path.join(BUNDLE_DIR, f), path.join(pkgRoot, f));
+  fs.chmodSync(path.join(pkgRoot, f), 0o755);
+}
 fs.copyFileSync(path.join(BUNDLE_DIR, ".env.example"), path.join(pkgRoot, ".env.example"));
 fs.copyFileSync(path.join(INSTALLER_SRC, "nugis.plist.template"), path.join(pkgRoot, "nugis.plist.template"));
 fs.copyFileSync(path.join(INSTALLER_SRC, "uninstall.sh"), path.join(pkgRoot, "uninstall.sh"));
@@ -115,4 +122,5 @@ run(
 );
 
 console.log(`\n✅ Fatto. Output in: ${OUT_DIR}`);
+console.log("   Un solo pacchetto per Intel e Apple Silicon (sceglie il binario giusto da solo).");
 console.log("   NON firmato/notarizzato: Gatekeeper avviserà 'sviluppatore non verificato' al primo avvio.");

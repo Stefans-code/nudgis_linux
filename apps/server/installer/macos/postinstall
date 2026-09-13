@@ -58,7 +58,18 @@ EOF
   chmod 600 "$CREDS_FILE"
 fi
 
-chmod 755 "$NUGIS_DIR/Nugis" 2>/dev/null || true
+# Pacchetto unico Intel+Apple Silicon: pkgbuild ha copiato ENTRAMBI i binari
+# (Nugis-x64, Nugis-arm64) — scegliamo qui quello giusto per l'hardware corrente e
+# ripuliamo l'altro (non serve tenerlo, non verrà mai eseguito su questa macchina).
+ARCH="$(uname -m)"
+case "$ARCH" in
+  arm64) BIN_SRC="Nugis-arm64" ;;
+  x86_64) BIN_SRC="Nugis-x64" ;;
+  *) echo "Architettura non riconosciuta: $ARCH" >&2; exit 1 ;;
+esac
+mv -f "$NUGIS_DIR/$BIN_SRC" "$NUGIS_DIR/Nugis"
+rm -f "$NUGIS_DIR/Nugis-x64" "$NUGIS_DIR/Nugis-arm64"
+chmod 755 "$NUGIS_DIR/Nugis"
 [ -f "$NUGIS_DIR/uninstall.sh" ] && chmod 755 "$NUGIS_DIR/uninstall.sh"
 
 sed "s|__NUGIS_DIR__|$NUGIS_DIR|g" "$NUGIS_DIR/nugis.plist.template" > "$PLIST_PATH"

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Installer Linux di Nugis (systemd). Va eseguito come root (sudo) dalla cartella
-# estratta dal tarball nugis-linux-<arch>.tar.gz — si aspetta di trovare accanto a sé
-# il binario "Nugis" e le cartelle generated/, prisma/, public/.
+# estratta dal tarball nugis-linux-universal.tar.gz — pacchetto unico per x64 e arm64,
+# si aspetta di trovare accanto a sé Nugis-x64 e/o Nugis-arm64 (sceglie da solo quello
+# giusto per l'hardware corrente, vedi sotto) e le cartelle generated/, prisma/, public/.
 #
 # Cosa fa, in ordine (equivalente Linux del wizard NugisSetup.exe su Windows):
 #   1. Copia i file in /opt/nugis (o $NUGIS_DIR se impostata)
@@ -34,8 +35,20 @@ if [ "$(id -u)" -ne 0 ]; then
   exit 1
 fi
 
-if [ ! -f "$SCRIPT_DIR/Nugis" ]; then
-  echo "Non trovo '$SCRIPT_DIR/Nugis'. Esegui questo script dalla cartella estratta dal tarball, non da un'altra posizione." >&2
+# Pacchetto unico multi-arch: contiene sia Nugis-x64 che Nugis-arm64 (niente fat
+# binary: pkg non lo supporta in modo affidabile, vedi docs/installer-linux.md) —
+# scegliamo qui quello giusto per l'hardware corrente.
+case "$(uname -m)" in
+  x86_64) BIN_SRC="Nugis-x64" ;;
+  aarch64|arm64) BIN_SRC="Nugis-arm64" ;;
+  *)
+    echo "Architettura non riconosciuta: $(uname -m) (attese: x86_64, aarch64/arm64)." >&2
+    exit 1
+    ;;
+esac
+
+if [ ! -f "$SCRIPT_DIR/$BIN_SRC" ]; then
+  echo "Non trovo '$SCRIPT_DIR/$BIN_SRC'. Esegui questo script dalla cartella estratta dal tarball, non da un'altra posizione." >&2
   exit 1
 fi
 
@@ -48,9 +61,9 @@ if ! command -v systemctl >/dev/null 2>&1 || [ ! -d /run/systemd/system ]; then
 fi
 
 # --- 1. Copia dei file ---------------------------------------------------------------
-echo "==> Copio i file in $NUGIS_DIR"
+echo "==> Copio i file in $NUGIS_DIR (binario: $BIN_SRC)"
 mkdir -p "$NUGIS_DIR"
-cp -a "$SCRIPT_DIR/Nugis" "$NUGIS_DIR/Nugis"
+cp -a "$SCRIPT_DIR/$BIN_SRC" "$NUGIS_DIR/Nugis"
 chmod 755 "$NUGIS_DIR/Nugis"
 for d in generated prisma public; do
   rm -rf "${NUGIS_DIR:?}/$d"

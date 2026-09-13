@@ -1,34 +1,35 @@
-// Builda i binari Linux (x64 + arm64) e li pacchettizza in due tarball autoinstallanti:
-//   installer-output-linux/nugis-linux-x64.tar.gz
-//   installer-output-linux/nugis-linux-arm64.tar.gz
-// ciascuno contenente Nugis + generated/ + prisma/ + public/ + .env.example +
-// install.sh + uninstall.sh + nugis.service.template (vedi installer/linux/).
+// Builda i binari Linux (x64 + arm64) e li impacchetta in UN SOLO tarball universale
+// (stesso file per qualunque distro x64/arm64, sceglie da solo il binario giusto
+// all'installazione in base a "uname -m" — vedi installer/linux/install.sh):
+//   installer-output-linux/nugis-linux-universal.tar.gz
 //
 // Uso: npm run build:installer:linux -w apps/server
 //
-// Nota onesta: il cross-build (pkg scarica il Node precompilato per il target) funziona
-// da qualunque host, ma questo script NON verifica che il binario risultante si avvii
-// davvero su una vera distro Linux — quello lo fa il workflow CI
-// (.github/workflows/build-linux-installer.yml) su un runner ubuntu-latest reale.
+// Cross-arch: pkg deve "fabbricare" il binario della arch target eseguendolo — su un
+// host x64 puro questo fallisce per "node22-linux-arm64" (nessuna emulazione). In CI
+// (.github/workflows/build-linux-installer.yml) registriamo QEMU via
+// docker/setup-qemu-action PRIMA di lanciare questo script, cosa che rende possibile
+// fabbricare anche il target arm64 sullo stesso runner ubuntu-latest x64 (stesso
+// principio di Rosetta per macOS). In locale, senza QEMU, l'arch diversa da quella
+// host viene saltata con un avviso invece di far fallire tutto lo script.
 
 const { execSync } = require("child_process");
 const fs = require("fs");
 const path = require("path");
-// Usiamo il "tar" di sistema (presente su Linux/macOS/CI; su Windows serve il tar.exe
-// incluso in Windows 10+/Git Bash) invece di una dipendenza npm dedicata.
 
 const SERVER_ROOT = path.resolve(__dirname, "..");
 const INSTALLER_SRC = path.join(SERVER_ROOT, "installer", "linux");
 const OUT_DIR = path.join(SERVER_ROOT, "installer-output-linux");
+const BUNDLE_NAME = "nugis-linux-universal";
+const BUNDLE_DIR = path.join(OUT_DIR, BUNDLE_NAME);
 
 const ALL_ARCHES = [
-  { arch: "x64", pkgTarget: "node22-linux-x64" },
-  { arch: "arm64", pkgTarget: "node22-linux-arm64" },
+  { arch: "x64", pkgTarget: "node22-linux-x64", binName: "Nugis-x64" },
+  { arch: "arm64", pkgTarget: "node22-linux-arm64", binName: "Nugis-arm64" },
 ];
-// ONLY_ARCH=x64|arm64: costruisce solo quell'arch. Usato dalla CI (un job per arch, su
-// un runner nativo di QUELL'arch — vedi .github/workflows/build-linux-installer.yml)
-// per evitare il problema di fabbricazione cross-arch di pkg (vedi più sotto).
+// ONLY_ARCH=x64|arm64: costruisce solo quell'arch (utile per test rapidi in locale).
 const ARCHES = process.env.ONLY_ARCH ? ALL_ARCHES.filter((a) => a.arch === process.env.ONLY_ARCH) : ALL_ARCHES;
+const hostArch = process.arch === "arm64" ? "arm64" : "x64";
 
 function run(cmd, cwd, env) {
   console.log(`\n$ ${cmd}`);
@@ -47,58 +48,62 @@ function copyDir(src, dest) {
 
 fs.rmSync(OUT_DIR, { recursive: true, force: true });
 fs.mkdirSync(OUT_DIR, { recursive: true });
+fs.rmSync(BUNDLE_DIR, { recursive: true, force: true });
+fs.mkdirSync(BUNDLE_DIR, { recursive: true });
 
-const hostArch = process.arch === "arm64" ? "arm64" : "x64"; // "x64"/"ia32"/... -> trattiamo tutto il resto come x64
-
-for (const { arch, pkgTarget } of ARCHES) {
+const built = [];
+for (const { arch, pkgTarget, binName } of ARCHES) {
   console.log(`\n================ Linux ${arch} (${pkgTarget}) ================`);
   const buildDirName = `dist-exe-linux-${arch}`;
-  const bundleName = `nugis-linux-${arch}`;
-  const bundleDir = path.join(OUT_DIR, bundleName);
-
   try {
-    run("node scripts/build-exe.js", SERVER_ROOT, {
-      PKG_TARGET: pkgTarget,
-      OUT_DIR: buildDirName,
-    });
+    run("node scripts/build-exe.js", SERVER_ROOT, { PKG_TARGET: pkgTarget, OUT_DIR: buildDirName, BIN_NAME: binName });
   } catch (err) {
     if (arch !== hostArch) {
-      // pkg per un'architettura CPU diversa da quella host deve "fabbricare" il binario
-      // eseguendo il binario di destinazione stesso durante il processo di build — cosa
-      // che fallisce senza emulazione (QEMU/Rosetta) quando le due arch non coincidono,
-      // anche cambiando solo il sistema operativo target funziona (verificato: da questo
-      // host è andata bene Linux STESSA arch, qui sotto invece l'arch è diversa).
-      // Non tentiamo emulazione qui: saltiamo e lasciamo che la CI (runner nativo per
-      // quell'arch, vedi .github/workflows/build-linux-installer.yml) produca questa
-      // variante. Continuiamo con le altre arch invece di far fallire tutto lo script.
       console.warn(
-        `\n⚠️  Salto Linux ${arch}: build cross-arch non disponibile su questo host (${process.arch}). ` +
-        `Serve un host/runner ${arch} reale (o QEMU) — vedi il workflow CI. Errore originale: ${err.message}`
+        `\n⚠️  Salto Linux ${arch}: build cross-arch non disponibile su questo host (${process.arch}) senza QEMU. ` +
+        `In CI viene registrato QEMU (docker/setup-qemu-action) prima di questo script, quindi lì funziona. ` +
+        `Errore originale: ${err.message}`
       );
       continue;
     }
     throw err;
   }
-
-  console.log(`Assemblo il pacchetto in ${bundleDir}`);
-  fs.rmSync(bundleDir, { recursive: true, force: true });
-  copyDir(path.join(SERVER_ROOT, buildDirName), bundleDir);
-  copyDir(INSTALLER_SRC, bundleDir); // install.sh, uninstall.sh, nugis.service.template
-  fs.chmodSync(path.join(bundleDir, "install.sh"), 0o755);
-  fs.chmodSync(path.join(bundleDir, "uninstall.sh"), 0o755);
-  try {
-    fs.chmodSync(path.join(bundleDir, "Nugis"), 0o755);
-  } catch {
-    /* build-exe.js già ci prova; ignorato se non ha effetto su questo filesystem */
-  }
-
-  const tarPath = path.join(OUT_DIR, `${bundleName}.tar.gz`);
-  console.log(`Comprimo in ${tarPath}`);
-  // --force-local: senza questo flag, bsdtar (quello incluso in Git Bash/Windows)
-  // interpreta un path assoluto con ":" (es. "C:\...") come un host remoto in stile
-  // ssh ("C" host, resta a provare una connessione di rete) invece che come un
-  // percorso locale. Su Linux/macOS/CI il flag è un no-op innocuo.
-  run(`tar --force-local -czf "${tarPath}" -C "${OUT_DIR}" "${bundleName}"`, OUT_DIR);
+  built.push({ arch, binName, buildDirName });
 }
 
-console.log(`\n✅ Fatto. Tarball in: ${OUT_DIR}`);
+if (built.length === 0) {
+  console.error("Nessuna arch buildata con successo — niente da impacchettare.");
+  process.exit(1);
+}
+
+console.log("\n================ Assemblo il pacchetto unico ================");
+for (const { binName, buildDirName } of built) {
+  fs.copyFileSync(path.join(SERVER_ROOT, buildDirName, binName), path.join(BUNDLE_DIR, binName));
+  fs.chmodSync(path.join(BUNDLE_DIR, binName), 0o755);
+}
+// prisma/public sono identici tra le arch — una copia sola, dalla prima build riuscita.
+for (const d of ["prisma", "public"]) {
+  copyDir(path.join(SERVER_ROOT, built[0].buildDirName, d), path.join(BUNDLE_DIR, d));
+}
+// generated/prisma-client va invece UNITO da tutte le build riuscite: ciascuna porta
+// solo il motore Prisma della propria arch (filtro in build-exe.js) e install.sh lancia
+// il binario giusto per l'hardware corrente, che ha bisogno del SUO motore.
+for (const { buildDirName } of built) {
+  copyDir(path.join(SERVER_ROOT, buildDirName, "generated"), path.join(BUNDLE_DIR, "generated"));
+}
+fs.copyFileSync(path.join(SERVER_ROOT, built[0].buildDirName, ".env.example"), path.join(BUNDLE_DIR, ".env.example"));
+copyDir(INSTALLER_SRC, BUNDLE_DIR); // install.sh, uninstall.sh, nugis.service.template
+fs.chmodSync(path.join(BUNDLE_DIR, "install.sh"), 0o755);
+fs.chmodSync(path.join(BUNDLE_DIR, "uninstall.sh"), 0o755);
+
+const tarPath = path.join(OUT_DIR, `${BUNDLE_NAME}.tar.gz`);
+console.log(`Comprimo in ${tarPath}`);
+// --force-local: senza questo flag, bsdtar (quello incluso in Git Bash/Windows)
+// interpreta un path assoluto con ":" (es. "C:\...") come un host remoto in stile ssh
+// invece che come un percorso locale. Su Linux/macOS/CI il flag è un no-op innocuo.
+run(`tar --force-local -czf "${tarPath}" -C "${OUT_DIR}" "${BUNDLE_NAME}"`, OUT_DIR);
+
+console.log(`\n✅ Fatto. Pacchetto (${built.map((b) => b.arch).join("+")}) in: ${tarPath}`);
+if (built.length < ALL_ARCHES.length) {
+  console.warn(`⚠️  Solo ${built.map((b) => b.arch).join(", ")} incluse — vedi avvisi sopra per le arch saltate.`);
+}
